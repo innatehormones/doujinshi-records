@@ -1,0 +1,29 @@
+@import "./theme.css";
+
+* { box-sizing: border-box; }
+
+html, body, #app {
+  margin: 0; padding: 0; height: 100%;
+  background: var(--surface-canvas);
+  color: var(--color-snow);
+  font-family: var(--font-ui);
+  font-size: var(--text-body-sm);
+  line-height: var(--leading-body-sm);
+  letter-spacing: var(--tracking-body);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+h1, h2, h3, h4 { margin: 0; color: var(--color-snow); font-weight: var(--font-weight-medium); letter-spacing: var(--tracking-body); }
+p { margin: 0; }
+code, pre, .mono { font-family: var(--font-mono); font-size: var(--text-caption); letter-spacing: 0.1em; }
+a { color: var(--color-mint-pulse); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+*::-webkit-scrollbar { width: 10px; height: 10px; }
+*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar-thumb { background: var(--color-graphite); border-radius: 9999px; }
+*::-webkit-scrollbar-thumb:hover { background: var(--color-slate); }
+::selection { background: var(--color-midnight-emerald); color: var(--color-snow); }
+
+#app > .n-config-provider > .n-layout > .n-layout-scroll-container > aside { height: 100vh }
+#app > .n-config-provider > .n-layout > .n-layout-scroll-container > .n-layout-content { height: 100vh; overflow: visible; }

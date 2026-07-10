@@ -1,0 +1,61 @@
+/* Supabase dark - design tokens (mirrors docs/styles/variables.css) */
+:root {
+  --color-phosphor-green: #3ecf8e;
+  --color-mint-pulse: #00c573;
+  --color-forest-depth: #1f4b37;
+  --color-midnight-emerald: #006239;
+  --color-snow: #fafafa;
+  --color-silver-mist: #b4b4b4;
+  --color-smoke: #898989;
+  --color-graphite: #4d4d4d;
+  --color-slate: #393939;
+  --color-charcoal: #2e2e2e;
+  --color-ash: #242424;
+  --color-obsidian: #121212;
+  --color-obsidian-deep: #0d0d0d;
+
+  --surface-canvas: var(--color-obsidian);
+  --surface-card: var(--color-obsidian);
+  --surface-elevated: var(--color-ash);
+  --surface-border: var(--color-charcoal);
+  --surface-border-strong: var(--color-slate);
+
+  --font-ui: "Inter", "Manrope", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "JetBrains Mono", "Source Code Pro", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  --text-caption: 12px;
+  --text-body-sm: 14px;
+  --text-body: 16px;
+  --text-subheading: 18px;
+  --text-heading-sm: 24px;
+  --text-heading: 36px;
+
+  --leading-caption: 1.5;
+  --leading-body-sm: 1.43;
+  --leading-body: 1.5;
+  --leading-subheading: 1.38;
+  --leading-heading-sm: 1.33;
+  --leading-heading: 1.2;
+
+  --tracking-body: -0.007em;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+
+  --spacing-8: 8px;
+  --spacing-16: 16px;
+  --spacing-24: 24px;
+  --spacing-32: 32px;
+  --spacing-40: 40px;
+  --spacing-48: 48px;
+  --spacing-64: 64px;
+  --spacing-80: 80px;
+
+  --radius-tags: 9999px;
+  --radius-cards: 16px;
+  --radius-inputs: 8px;
+  --radius-buttons: 9999px;
+
+  --shadow-sm: 0 4px 6px -1px rgba(0, 0, 0, 0.10), 0 2px 4px -2px rgba(0, 0, 0, 0.10);
+  --page-max-width: 1200px;
+  --card-padding: 24px;
+}

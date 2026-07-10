@@ -1,0 +1,44 @@
+{
+  "items": [
+    {
+      "id": 1,
+      "title": "Hatsune Miku 2024",
+      "circle": "Decorators",
+      "hash": "aaa000aaa000aaa000aaa000aaa000aaa000aaa000aaa000aaa000aaa000aaa0",
+      "ext": "zip",
+      "size_bytes": 12345678,
+      "viewed": false,
+      "marked_for_delete": false,
+      "physically_deleted": false,
+      "current_location": "identified",
+      "cover_url": null
+    },
+    {
+      "id": 2,
+      "title": "Kagamine Rin",
+      "circle": "Stardust",
+      "hash": "bbb000bbb000bbb000bbb000bbb000bbb000bbb000bbb000bbb000bbb000bbb0",
+      "ext": "zip",
+      "size_bytes": 87654321,
+      "viewed": true,
+      "marked_for_delete": false,
+      "physically_deleted": false,
+      "current_location": "identified",
+      "cover_url": "/api/covers/bbb000bbb000bbb000bbb000bbb000bbb000bbb000bbb000bbb000bbb000bbb0"
+    },
+    {
+      "id": 3,
+      "title": "Megurine Luka Live",
+      "circle": "Piapro",
+      "hash": "ccc000ccc000ccc000ccc000ccc000ccc000ccc000ccc000ccc000ccc000ccc0",
+      "ext": "zip",
+      "size_bytes": 1024,
+      "viewed": false,
+      "marked_for_delete": true,
+      "physically_deleted": false,
+      "current_location": "identified",
+      "cover_url": "/api/covers/ccc000ccc000ccc000ccc000ccc000ccc000ccc000ccc000ccc000ccc000ccc0"
+    }
+  ],
+  "total": 3
+}
