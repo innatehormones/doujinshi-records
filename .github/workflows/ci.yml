@@ -17,7 +17,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: src-tauri -> target
-      - run: cd src-tauri && cargo test --offline
+      - run: cd src-tauri && cargo test
 
   frontend:
     runs-on: windows-latest
