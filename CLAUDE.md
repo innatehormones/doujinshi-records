@@ -13,7 +13,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 技术栈
 
-- **后端**：Rust + Tauri 2 + SeaORM 1.1 (SQLite) + Axum 0.7 + notify-debouncer-full + BLAKE3
+- **后端**：Rust + Tauri 2 + SeaORM 1.1 (SQLite) + Axum 0.7 + notify-debouncer-full + BLAKE3 + lru
 - **前端**：Vue 3 + TypeScript + Naive UI + Pinia + Vue Router
 - **包管理**：pnpm workspace（单包）
 - **平台**：Windows 10/11（Tauri 2 WebView2）
@@ -82,7 +82,7 @@ doujinshi-records/
 │   │   ├── config.rs           # AppConfig + 资源目录派生方法（identified/will_delete/archived/inbox/preview_cache）
 │   │   ├── error.rs            # AppError / AppResult
 │   │   ├── commands/           # Tauri 命令（library / inbox / recycle / dirty / settings）
-│   │   ├── services/           # 业务核心：scanner / identifier / hasher / filename_parser / archive / cover / cover_format / state_machine / dirty_scanner
+│   │   ├── services/           # 业务核心：scanner / identifier / hasher / filename_parser / archive / cover / cover_format / state_machine / dirty_scanner / preview_cache
 │   │   ├── http/               # Axum 路由 + ApiState + 鉴权中间件，HTTP 服务跑在独立线程 + 独立 tokio runtime
 │   │   ├── db/                 # SeaORM 实体 + 版本化迁移（init_schema_versioned，CURRENT_VERSION=5）
 │   │   └── models/             # 跨前后端序列化结构（FileSummary）
@@ -95,6 +95,7 @@ doujinshi-records/
 │   ├── doujinshi-will-delete/  # 待删除
 │   ├── doujinshi-archived/     # 归档
 │   ├── covers/                 # 提取的封面（~100 KB WebP）
+│   ├── _preview_cache/         # HTTP images 响应体 LRU 缓存（disk-backed，gzip 自动）
 │   └── data.db                 # SQLite
 ├── docs/superpowers/           # 设计 spec + 实施 plan
 └── .claude/                    # 本项目的 CodeGraph 指令（已配置）
@@ -165,8 +166,10 @@ Pinia store 持有列表数据，监听 `library-updated` 事件刷新 5 个 sto
 
 - 设计 spec：`docs/superpowers/specs/2026-07-09-doujinshi-records-design.md`
 - V3 spec（归档 + 脏数据 + webp）：`docs/superpowers/specs/2026-07-11-v3-archive-and-dirty-data.md`
+- V3.1 spec（LRU preview cache）：`docs/superpowers/specs/2026-07-11-v31-lru-preview-cache.md`
 - 实施 plan：`docs/superpowers/plans/2026-07-09-doujinshi-records-v1.md`
 - V3 plan：`docs/superpowers/plans/2026-07-11-v3-archive-and-dirty-data.md`
+- V3.1 plan：`docs/superpowers/plans/2026-07-11-v31-lru-preview-cache.md`
 - v1.x 增量 plan：`docs/superpowers/plans/v1x/`
 - v2 增量 plan：`docs/superpowers/plans/v2/`
 - 项目总览：`README.md`
@@ -182,3 +185,4 @@ Pinia store 持有列表数据，监听 `library-updated` 事件刷新 5 个 sto
 - HTTP 端口是 OS 随机分配，**不**固定；前端 `useSettingsStore` 是唯一权威来源。
 - 文件状态转移一律走 `state_machine::transition_with_dirs`，不要在外层 command 拼装 file-rename 逻辑。
 - 封面输出是 webp（lossless），由 `cover_format::encode_webp` 负责；HTTP 路由的 Content-Type 仍是 `image/jpeg` 因为现有 jpg 历史封面也走该路径，浏览器对 jpg 解析正常。
+- **`/api/doujinshi/:id/images` 走 LRU preview cache**：磁盘 `_preview_cache/<id>-<mtime>.json` + 内存 `lru::LruCache`，cache key `(file_id, zip_mtime)` 自动随 zip 改动失效；HTTP ETag = `"{id}-{mtime_unix}"` 触发 304 短路。后台 30s GC 兜底压回 80% waterline。Handler 写盘用 `tokio::spawn` fire-and-forget，命中优先。
