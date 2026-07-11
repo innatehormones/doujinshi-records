@@ -6,7 +6,7 @@ use axum::http::{header, StatusCode};
 use axum::response::IntoResponse;
 use axum::Json;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect, PaginatorTrait};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 pub async fn health() -> Json<serde_json::Value> {
@@ -176,4 +176,108 @@ pub async fn cover_by_hash(
     Path(hash): Path<String>,
 ) -> impl IntoResponse {
     cover(State(s), Path(hash)).await
+}
+
+// ===== V2 Conflict Compare =====
+
+#[derive(Serialize)]
+pub struct CompareSide {
+    pub file_id: i64,
+    pub title: String,
+    pub hash: Option<String>,
+    pub cover_url: Option<String>,
+    pub image_names: Vec<String>,
+    /// True when the archive file no longer exists on disk.
+    pub zip_missing: bool,
+    /// Set when the archive is on disk but couldn't be parsed
+    /// (e.g. corrupt zip, or non-zip extension in V1).
+    pub zip_error: Option<String>,
+}
+
+#[derive(Serialize)]
+pub struct ConflictCompare {
+    pub conflict_id: i64,
+    pub a: CompareSide,
+    pub b: CompareSide,
+}
+
+/// `GET /api/conflicts/:id/compare` — return both sides of a
+/// conflict: the already-identified row (A) and the new zip still
+/// sitting in the inbox (B). Used by the ConflictView page so the
+/// user can decide which copy to keep.
+pub async fn compare(
+    State(s): State<ApiState>,
+    Path(conflict_id): Path<i64>,
+) -> impl IntoResponse {
+    use crate::db::entities::conflict::Entity as ConflictEntity;
+
+    let row = match ConflictEntity::find_by_id(conflict_id).one(&s.conn).await {
+        Ok(Some(r)) => r,
+        Ok(None) => return (StatusCode::NOT_FOUND, "conflict not found").into_response(),
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    };
+
+    // A side: look up the already-identified file by a_file_id.
+    let a_row = doujinshi_file::Entity::find_by_id(row.a_file_id)
+        .one(&s.conn)
+        .await
+        .unwrap_or(None);
+    let a = match a_row {
+        Some(m) => {
+            let (names, missing, err) = read_image_names(&m.current_path);
+            let hash = m.hash.clone();
+            CompareSide {
+                file_id: m.id,
+                title: m.title,
+                hash: Some(hash.clone()),
+                cover_url: cover_url_for(&hash),
+                image_names: names,
+                zip_missing: missing,
+                zip_error: err,
+            }
+        }
+        None => CompareSide {
+            file_id: row.a_file_id,
+            title: format!("(文件 {} 已不存在)", row.a_file_id),
+            hash: None,
+            cover_url: None,
+            image_names: vec![],
+            zip_missing: false,
+            zip_error: None,
+        },
+    };
+
+    // B side: read the inbox file directly.
+    let (names, missing, err) = read_image_names(&row.b_file_path);
+    let b = CompareSide {
+        file_id: 0,
+        title: row.b_filename,
+        hash: row.b_hash,
+        cover_url: None,
+        image_names: names,
+        zip_missing: missing,
+        zip_error: err,
+    };
+
+    (StatusCode::OK, Json(ConflictCompare { conflict_id, a, b })).into_response()
+}
+
+/// Returns `(names, missing, error_msg)`.
+/// - `missing = true` → file not on disk
+/// - `error_msg = Some(_)` → archive was present but could not be
+///   parsed (corrupt, wrong format, etc.)
+fn read_image_names(path: &str) -> (Vec<String>, bool, Option<String>) {
+    let p = std::path::Path::new(path);
+    if !p.exists() {
+        return (vec![], true, None);
+    }
+    match crate::services::archive::list_image_names(p) {
+        Ok(n) => (n, false, None),
+        Err(e) => (vec![], false, Some(e.to_string())),
+    }
+}
+
+/// Path-only cover URL — the SPA prepends `useSettingsStore.apiBase`.
+fn cover_url_for(hash: &str) -> Option<String> {
+    Some(format!("/api/covers/by-hash/{}", hash))
 }

@@ -51,6 +51,10 @@ pub fn build_router(state: ApiState, preferred_port: Option<u16>) -> Result<u16>
         // come before the :file_id wildcard.
         .route("/api/covers/by-hash/:hash", get(api::cover_by_hash))
         .route("/api/covers/:file_id", get(api::cover))
+        // V2 conflict compare (placed AFTER /api/covers so the
+        // dynamic `:id` segment here doesn't compete with any
+        // wildcard route above).
+        .route("/api/conflicts/:id/compare", get(api::compare))
         .with_state(state.clone())
         // Bearer-token auth: must sit inside `with_state` (state-aware)
         // and on the OUTSIDE of `.layer(cors)` so preflight OPTIONS can
@@ -121,6 +125,7 @@ pub fn build_test_router(state: ApiState) -> axum::Router {
         .route("/api/doujinshi/:id/viewed", axum::routing::post(api::mark_viewed_http))
         .route("/api/covers/by-hash/:hash", get(api::cover_by_hash))
         .route("/api/covers/:file_id", get(api::cover))
+        .route("/api/conflicts/:id/compare", get(api::compare))
         .with_state(state.clone())
         .layer(axum::middleware::from_fn_with_state(
             state,
