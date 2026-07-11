@@ -139,12 +139,19 @@ pub async fn identify_file(
         .one(conn)
         .await?
     {
-        store_alias(conn, existing.id, &filename).await?;
-        let mut am: doujinshi_file::ActiveModel = existing.clone().into();
-        am.filename = Set(filename);
-        am.current_path = Set(file_path.to_string_lossy().into_owned());
-        am.updated_at = Set(chrono::Utc::now());
-        am.update(conn).await?;
+        if existing.current_location == "identified" {
+            // 已在 identified：仅刷新 filename + alias（V2 行为）。
+            store_alias(conn, existing.id, &filename).await?;
+            let mut am: doujinshi_file::ActiveModel = existing.clone().into();
+            am.filename = Set(filename);
+            am.current_path = Set(file_path.to_string_lossy().into_owned());
+            am.updated_at = Set(chrono::Utc::now());
+            am.update(conn).await?;
+        } else {
+            // V3：行处于 will_delete / archived，移源文件到 identified/ 并恢复状态。
+            let identified_dir = crate::config::AppConfig::load()?.identified_dir();
+            reactivate_row(conn, existing.id, file_path, &identified_dir).await?;
+        }
         return Ok(IdentifyOutcome::AlreadyKnown(existing.id));
     }
 
@@ -425,6 +432,56 @@ pub async fn store_alias(conn: &DatabaseConnection, file_id: i64, alias: &str) -
     Ok(())
 }
 
+/// 把源文件从 inbox 移到 identified_dir/，并把行状态恢复到 identified。
+/// 仅在 hash 命中但行处于非 identified 状态（will_delete/archived）时调用。
+/// V2 行为是源文件不动仅更新路径；V3 强制移动以保证
+/// current_location='identified' ⇒ 文件在 identified/ 下的不变量。
+pub async fn reactivate_row(
+    conn: &DatabaseConnection,
+    row_id: i64,
+    src_file_path: &Path,
+    identified_dir: &Path,
+) -> Result<i64> {
+    use sea_orm::EntityTrait;
+    let row = doujinshi_file::Entity::find_by_id(row_id)
+        .one(conn)
+        .await?
+        .ok_or_else(|| anyhow!("file {} not found", row_id))?;
+
+    std::fs::create_dir_all(identified_dir)?;
+    let filename = src_file_path
+        .file_name()
+        .ok_or_else(|| anyhow!("invalid source path: {}", src_file_path.display()))?;
+    let dest = identified_dir.join(filename);
+
+    if let Err(e) = std::fs::rename(src_file_path, &dest) {
+        if matches!(e.kind(), std::io::ErrorKind::CrossesDevices)
+            || e.raw_os_error() == Some(17)
+        {
+            std::fs::copy(src_file_path, &dest)?;
+            std::fs::remove_file(src_file_path)?;
+        } else {
+            return Err(e.into());
+        }
+    }
+
+    store_alias(
+        conn,
+        row_id,
+        &dest.file_name().unwrap().to_string_lossy(),
+    )
+    .await?;
+
+    let mut am: doujinshi_file::ActiveModel = row.into();
+    am.current_path = Set(dest.to_string_lossy().into_owned());
+    am.current_location = Set("identified".into());
+    am.physically_deleted = Set(false);
+    am.updated_at = Set(chrono::Utc::now());
+    am.update(conn).await?;
+    record_event(conn, row_id, "reactivated", None).await?;
+    Ok(row_id)
+}
+
 pub async fn record_conflict(
     conn: &DatabaseConnection,
     a_id: i64,
@@ -524,5 +581,43 @@ Archive: test.rar
         assert!(names.iter().any(|n| n.ends_with("01.jpg")));
         assert!(names.iter().any(|n| n.ends_with("02.png")));
         assert!(!names.iter().any(|n| n.ends_with("readme.txt")));
+    }
+
+    #[tokio::test]
+    async fn reactivate_row_moves_file_and_updates_location() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = crate::db::connect(&dir.path().join("t.db")).await.unwrap();
+        crate::db::migrations::init_schema_versioned(&conn).await.unwrap();
+
+        let inbox = dir.path().join("inbox");
+        let identified = dir.path().join("identified");
+        std::fs::create_dir_all(&inbox).unwrap();
+        std::fs::create_dir_all(&identified).unwrap();
+        let src = inbox.join("f.zip");
+        std::fs::write(&src, b"data").unwrap();
+
+        let now = chrono::Utc::now();
+        let m = doujinshi_file::ActiveModel {
+            title: Set("t".into()),
+            filename: Set("f.zip".into()),
+            hash: Set("h".into()),
+            ext: Set("zip".into()),
+            size_bytes: Set(4),
+            current_path: Set("placeholder".into()),
+            current_location: Set("archived".into()),
+            physically_deleted: Set(true),
+            created_at: Set(now),
+            updated_at: Set(now),
+            ..Default::default()
+        };
+        let id = m.insert(&conn).await.unwrap().id;
+
+        reactivate_row(&conn, id, &src, &identified).await.unwrap();
+
+        assert!(!src.exists(), "src 应被移走");
+        assert!(identified.join("f.zip").exists(), "dest 应在 identified/");
+        let row = doujinshi_file::Entity::find_by_id(id).one(&conn).await.unwrap().unwrap();
+        assert_eq!(row.current_location, "identified");
+        assert!(!row.physically_deleted);
     }
 }
