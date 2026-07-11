@@ -35,8 +35,15 @@ pub fn build_router(state: ApiState, preferred_port: Option<u16>) -> Result<u16>
     let router = Router::new()
         .route("/api/health", get(api::health))
         .route("/api/doujinshi/search", get(api::search))
+        // V2: explicit alias, registered before by-hash so the
+        // literal "check" path is not eaten by the `:hash` wildcard.
+        .route("/api/doujinshi/check", get(api::check))
         .route("/api/doujinshi/by-hash/:hash", get(api::by_hash))
         .route("/api/doujinshi/:id", get(api::by_id))
+        .route("/api/doujinshi/:id/viewed", axum::routing::post(api::mark_viewed_http))
+        // V2: same as /api/covers/:file_id but hash-keyed. Must
+        // come before the :file_id wildcard.
+        .route("/api/covers/by-hash/:hash", get(api::cover_by_hash))
         .route("/api/covers/:file_id", get(api::cover))
         .with_state(state)
         .layer(cors);
@@ -93,8 +100,11 @@ pub fn build_test_router(state: ApiState) -> axum::Router {
     axum::Router::new()
         .route("/api/health", get(api::health))
         .route("/api/doujinshi/search", get(api::search))
+        .route("/api/doujinshi/check", get(api::check))
         .route("/api/doujinshi/by-hash/:hash", get(api::by_hash))
         .route("/api/doujinshi/:id", get(api::by_id))
+        .route("/api/doujinshi/:id/viewed", axum::routing::post(api::mark_viewed_http))
+        .route("/api/covers/by-hash/:hash", get(api::cover_by_hash))
         .route("/api/covers/:file_id", get(api::cover))
         .with_state(state)
         .layer(cors)

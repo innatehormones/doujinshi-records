@@ -35,11 +35,14 @@ async function runScan() {
 }
 
 const apiLines = computed(() => [
-  "GET  " + store.apiBase + "/api/health        健康检查",
+  "GET  " + store.apiBase + "/api/health              健康检查",
   "GET  " + store.apiBase + "/api/doujinshi/search?q=关键词",
-  "GET  " + store.apiBase + "/api/doujinshi/by-hash/<hash>    按哈希查询",
-  "GET  " + store.apiBase + "/api/doujinshi/<id>     按 ID 查询",
-  "GET  " + store.apiBase + "/api/covers/<file_id>  封面图片",
+  "GET  " + store.apiBase + "/api/doujinshi/check?hash=<blake3>  检查哈希是否在库",
+  "GET  " + store.apiBase + "/api/doujinshi/by-hash/<hash>       按哈希查询",
+  "GET  " + store.apiBase + "/api/doujinshi/<id>                  按 ID 查询",
+  "POST " + store.apiBase + "/api/doujinshi/<id>/viewed          标记已看",
+  "GET  " + store.apiBase + "/api/covers/by-hash/<hash>          按哈希取封面",
+  "GET  " + store.apiBase + "/api/covers/<file_id>               按 ID 取封面",
 ])
 </script>
 

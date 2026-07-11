@@ -121,3 +121,59 @@ pub async fn cover(
     // transparent PNG so the frontend <img> never gets an error event.
     crate::http::placeholder::placeholder_response().into_response()
 }
+
+// ===== V2 endpoints =====
+
+#[derive(Deserialize)]
+pub struct CheckParams {
+    pub hash: String,
+}
+
+/// `GET /api/doujinshi/check?hash=<blake3>` — friendly alias for
+/// `by-hash` exposed for browser-extension callers ("have I seen this
+/// hash before?"). Returns the same shape: `FileSummary | null`.
+pub async fn check(
+    State(s): State<ApiState>,
+    Query(p): Query<CheckParams>,
+) -> Json<serde_json::Value> {
+    let row = doujinshi_file::Entity::find()
+        .filter(doujinshi_file::Column::Hash.eq(&p.hash))
+        .one(&s.conn)
+        .await
+        .unwrap_or(None);
+    match row {
+        Some(m) => Json(json!(file_summary::from_model(&m))),
+        None => Json(json!(null)),
+    }
+}
+
+/// `POST /api/doujinshi/:id/viewed` — mark a single file as viewed.
+/// Returns 204 on success, 404 when the id does not exist.
+pub async fn mark_viewed_http(
+    State(s): State<ApiState>,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
+    use sea_orm::{ActiveModelTrait, EntityTrait, Set};
+    let row = match doujinshi_file::Entity::find_by_id(id).one(&s.conn).await {
+        Ok(Some(r)) => r,
+        Ok(None) => return (StatusCode::NOT_FOUND, "no file").into_response(),
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    };
+    let mut am: doujinshi_file::ActiveModel = row.into();
+    am.viewed = Set(true);
+    am.updated_at = Set(chrono::Utc::now());
+    match am.update(&s.conn).await {
+        Ok(_) => (StatusCode::NO_CONTENT, "").into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+/// `GET /api/covers/by-hash/:hash` — same handler body as `/api/covers/:file_id`
+/// but mounted at a hash-keyed path so the browser extension can fetch a
+/// cover without first knowing the internal row id.
+pub async fn cover_by_hash(
+    State(s): State<ApiState>,
+    Path(hash): Path<String>,
+) -> impl IntoResponse {
+    cover(State(s), Path(hash)).await
+}
