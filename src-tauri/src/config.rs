@@ -18,15 +18,61 @@ impl AppConfig {
     pub fn inbox_dir(&self) -> PathBuf { self.resources_dir.join("doujinshi") }
     pub fn identified_dir(&self) -> PathBuf { self.resources_dir.join("doujinshi-identified") }
     pub fn will_delete_dir(&self) -> PathBuf { self.resources_dir.join("doujinshi-will-delete") }
+    pub fn archived_dir(&self) -> PathBuf { self.resources_dir.join("doujinshi-archived") }
+    pub fn preview_cache_dir(&self) -> PathBuf { self.resources_dir.join("_preview_cache") }
     pub fn covers_dir(&self) -> PathBuf { self.resources_dir.join("covers") }
     pub fn db_path(&self) -> PathBuf { self.resources_dir.join("data.db") }
 
     pub fn ensure_dirs(&self) -> std::io::Result<()> {
-        for dir in [self.inbox_dir(), self.identified_dir(),
-                    self.will_delete_dir(), self.covers_dir()] {
+        for dir in [
+            self.inbox_dir(),
+            self.identified_dir(),
+            self.will_delete_dir(),
+            self.archived_dir(),
+            self.preview_cache_dir(),
+            self.covers_dir(),
+        ] {
             std::fs::create_dir_all(&dir)?;
         }
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn archived_dir_lives_under_resources() {
+        let cfg = AppConfig {
+            resources_dir: std::path::PathBuf::from("r"),
+        };
+        assert_eq!(
+            cfg.archived_dir(),
+            std::path::PathBuf::from("r/doujinshi-archived")
+        );
+    }
+
+    #[test]
+    fn preview_cache_dir_lives_under_resources() {
+        let cfg = AppConfig {
+            resources_dir: std::path::PathBuf::from("r"),
+        };
+        assert_eq!(
+            cfg.preview_cache_dir(),
+            std::path::PathBuf::from("r/_preview_cache")
+        );
+    }
+
+    #[test]
+    fn ensure_dirs_creates_archived_and_preview_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = AppConfig {
+            resources_dir: dir.path().to_path_buf(),
+        };
+        cfg.ensure_dirs().unwrap();
+        assert!(dir.path().join("doujinshi-archived").exists());
+        assert!(dir.path().join("_preview_cache").exists());
     }
 }
 
