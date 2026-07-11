@@ -58,8 +58,35 @@ impl Scanner {
                 &self.covers_dir,
                 &self.identified_dir,
                 None,
+                false,
             )
-            .await?;
+            .await
+            .unwrap_or_else(|e| {
+                use crate::services::identifier::IdentifyOutcome;
+                tracing::error!(error = %e, "identify_file failed");
+                let is_rar = p
+                    .extension()
+                    .and_then(|s| s.to_str())
+                    .map(|s| s.eq_ignore_ascii_case("rar"))
+                    .unwrap_or(false);
+                if is_rar {
+                    if let Some(payload) = e.to_rar_payload() {
+                        if let Ok(handle_guard) = self.app_handle.try_lock() {
+                            if let Some(handle) = handle_guard.clone() {
+                                let _ = handle.emit(
+                                    "rar-error",
+                                    serde_json::json!({
+                                        "filename": p.file_name().and_then(|n| n.to_str()).unwrap_or(""),
+                                        "file_path": p.to_string_lossy(),
+                                        "error": payload,
+                                    }),
+                                );
+                            }
+                        }
+                    }
+                }
+                IdentifyOutcome::Error(e.to_string())
+            });
             log_outcome(&outcome);
             processed += 1;
         }

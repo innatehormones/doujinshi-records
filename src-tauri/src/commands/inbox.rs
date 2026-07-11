@@ -1,8 +1,9 @@
 use crate::db::entities::{conflict, doujinshi_file};
 use crate::error::AppResult;
 use crate::AppState;
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
+use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use tauri::State;
 
 #[derive(Debug, Serialize)]
@@ -64,9 +65,30 @@ pub async fn resolve_conflict(
     id: i64,
     action: Option<ConflictAction>,
 ) -> AppResult<()> {
-    let action = action.unwrap_or(ConflictAction::Skip);
+    resolve_conflict_inner(
+        &state.conn,
+        &state.config.covers_dir(),
+        &state.config.identified_dir(),
+        id,
+        action.unwrap_or(ConflictAction::Skip),
+    )
+    .await
+}
+
+/// Inner logic for `resolve_conflict`. Takes only the bits it
+/// actually needs (DB handle + a couple of paths) so it is reachable
+/// from integration tests without going through `AppState` — and
+/// without pulling in the `tauri` crate (and its `tao`/`wry` GUI
+/// deps that the test runner can't load on Windows).
+pub async fn resolve_conflict_inner(
+    conn: &DatabaseConnection,
+    covers_dir: &std::path::Path,
+    identified_dir: &std::path::Path,
+    id: i64,
+    action: ConflictAction,
+) -> AppResult<()> {
     let row = conflict::Entity::find_by_id(id)
-        .one(&state.conn)
+        .one(conn)
         .await?
         .ok_or_else(|| crate::error::AppError::Other("conflict not found".into()))?;
 
@@ -82,27 +104,33 @@ pub async fn resolve_conflict(
             }
         }
         ConflictAction::ReplaceB => {
-            // Delete A's zip on disk, then push B through the normal
-            // identifier pipeline. A's row stays (mark physically
-            // deleted so the filename_alias path doesn't claim the
-            // orphan hash).
+            // Delete A's zip on disk and mark its row
+            // physically_deleted so the collision check in
+            // `identify_file` doesn't re-trip on A's filename when
+            // B tries to land. A's row stays so the user can still
+            // see the entry in history.
             let a_row = doujinshi_file::Entity::find_by_id(row.a_file_id)
-                .one(&state.conn)
+                .one(conn)
                 .await?;
             if let Some(a) = a_row {
                 let a_path = std::path::Path::new(&a.current_path);
                 if a_path.exists() {
                     let _ = std::fs::remove_file(a_path);
                 }
+                let mut am: doujinshi_file::ActiveModel = a.into();
+                am.physically_deleted = Set(true);
+                am.updated_at = Set(chrono::Utc::now());
+                let _ = am.update(conn).await;
             }
-            let b_path = std::path::PathBuf::from(&row.b_file_path);
+            let b_path = PathBuf::from(&row.b_file_path);
             if b_path.exists() {
                 let _ = crate::services::identifier::identify_file(
-                    &state.conn,
+                    conn,
                     &b_path,
-                    &state.config.covers_dir(),
-                    &state.config.identified_dir(),
+                    covers_dir,
+                    identified_dir,
                     None,
+                    false,
                 )
                 .await;
             }
@@ -110,14 +138,15 @@ pub async fn resolve_conflict(
         ConflictAction::KeepBoth => {
             // Same as ReplaceB but with a " (copy)" suffix so the
             // filename no longer collides with A.
-            let b_path = std::path::PathBuf::from(&row.b_file_path);
+            let b_path = PathBuf::from(&row.b_file_path);
             if b_path.exists() {
                 let _ = crate::services::identifier::identify_file(
-                    &state.conn,
+                    conn,
                     &b_path,
-                    &state.config.covers_dir(),
-                    &state.config.identified_dir(),
+                    covers_dir,
+                    identified_dir,
                     Some("(copy)"),
+                    false,
                 )
                 .await;
             }
@@ -130,6 +159,6 @@ pub async fn resolve_conflict(
     // it nagging in the inbox.
     let mut am: conflict::ActiveModel = row.into();
     am.resolved = Set(true);
-    am.update(&state.conn).await?;
+    am.update(conn).await?;
     Ok(())
 }

@@ -5,6 +5,7 @@ import App from "./App.vue"
 import router from "./router"
 import { listen } from "@tauri-apps/api/event"
 import { useLibraryStore, useRecycleStore, useInboxStore } from "@/stores"
+import type { RarErrorEntry } from "@/types/api"
 import "./styles/base.css"
 
 const app = createApp(App)
@@ -21,4 +22,12 @@ listen("library-updated", () => {
   lib.load().catch(() => {})
   rec.load().catch(() => {})
   inb.load().catch(() => {})
+})
+
+// RAR errors surface as one-shot events (not part of the regular
+// conflicts list). Forward them to the inbox store so the user sees
+// actionable cards. The backend only emits this for .rar files.
+listen<RarErrorEntry>("rar-error", (event) => {
+  const inb = useInboxStore()
+  inb.pushRarError(event.payload)
 })
