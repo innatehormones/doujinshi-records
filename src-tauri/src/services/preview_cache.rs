@@ -72,6 +72,68 @@ impl PreviewCache {
     pub fn max_bytes(&self) -> u64 { self.max_bytes }
 
     pub fn bytes_in_cache(&self) -> u64 { self.bytes_in_cache.load(Ordering::Relaxed) }
+
+    fn entry_path(&self, key: &CacheKey) -> PathBuf {
+        let (id, mtime) = *key;
+        let mtime_unix = mtime.duration_since(SystemTime::UNIX_EPOCH).unwrap_or_default().as_secs();
+        self.dir.join(format!("{}-{}.json", id, mtime_unix))
+    }
+
+    /// Read cached body; updates LRU recency. Returns clone to avoid
+    /// callers fighting `lru.get` borrow lifetime.
+    pub fn get(&self, key: &CacheKey) -> Option<Vec<u8>> {
+        let mut lru = self.inner.lock().unwrap();
+        lru.get(key).map(|e| e.body.clone())
+    }
+
+    /// Get from cache or compute via `compute`, persisting the result
+    /// to disk. If the cache is full, evicts LRU entries until
+    /// `bytes_in_cache <= max_bytes * 80%`.
+    pub async fn get_or_compute<F, Fut>(&self, key: CacheKey, compute: F) -> Result<Vec<u8>>
+    where
+        F: FnOnce() -> Fut,
+        Fut: std::future::Future<Output = Result<Vec<u8>>>,
+    {
+        if let Some(body) = self.get(&key) {
+            return Ok(body);
+        }
+        let body = compute().await?;
+        self.insert(key, body.clone()).await?;
+        Ok(body)
+    }
+
+    async fn insert(&self, key: CacheKey, body: Vec<u8>) -> Result<()> {
+        let size = body.len() as u64;
+        let final_path = self.entry_path(&key);
+        let tmp_path = self.dir.join(format!(
+            ".tmp-{}-{}",
+            std::process::id(),
+            chrono::Utc::now().timestamp_nanos_opt().unwrap_or(0)
+        ));
+        tokio::fs::write(&tmp_path, &body).await?;
+        tokio::fs::rename(&tmp_path, &final_path).await?;
+
+        let mut lru = self.inner.lock().unwrap();
+        // lru::LruCache::push returns the evicted entry if over capacity.
+        // We use put() to control ordering precisely.
+        if let Some(old) = lru.put(key, CacheEntry { body, last_accessed: Instant::now() }) {
+            // old entry was displaced; nothing to do, capacity-side handled by lru crate.
+            let _ = old;
+        }
+        self.bytes_in_cache.fetch_add(size, Ordering::Relaxed);
+        // Excess bytes beyond max_bytes: drain to 80% waterline by evicting LRU.
+        let waterline = self.max_bytes * 80 / 100;
+        while self.bytes_in_cache.load(Ordering::Relaxed) > waterline {
+            if let Some((evicted_key, evicted)) = lru.pop_lru() {
+                let ev_size = evicted.body.len() as u64;
+                self.bytes_in_cache.fetch_sub(ev_size, Ordering::Relaxed);
+                let _ = tokio::fs::remove_file(self.entry_path(&evicted_key)).await;
+            } else {
+                break;
+            }
+        }
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -99,5 +161,48 @@ mod tests {
 
         let cache = PreviewCache::new(dir.path(), 1024 * 1024).unwrap();
         assert_eq!(cache.bytes_in_cache(), 11);
+    }
+
+    #[tokio::test]
+    async fn get_or_compute_miss_triggers_compute_and_writes_disk() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = PreviewCache::new(dir.path(), 1024 * 1024).unwrap();
+        let key = (1, mtime_from_unix(1_700_000_000));
+        let mut called = 0;
+        let body = cache
+            .get_or_compute(key, || async {
+                called += 1;
+                Ok::<_, anyhow::Error>(b"computed".to_vec())
+            })
+            .await
+            .unwrap();
+        assert_eq!(body, b"computed");
+        assert_eq!(called, 1);
+
+        // Disk file exists matching naming convention.
+        let on_disk = std::fs::read(dir.path().join("1-1700000000.json")).unwrap();
+        assert_eq!(on_disk, b"computed");
+        assert_eq!(cache.bytes_in_cache(), 8);
+    }
+
+    #[tokio::test]
+    async fn get_or_compute_hit_does_not_recompute() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = PreviewCache::new(dir.path(), 1024 * 1024).unwrap();
+        let key = (7, mtime_from_unix(1_700_000_001));
+        let _ = cache
+            .get_or_compute(key, || async { Ok::<_, anyhow::Error>(b"abc".to_vec()) })
+            .await
+            .unwrap();
+        let mut called = 0;
+        let body = cache
+            .get_or_compute(key, || async {
+                called += 1;
+                Ok::<_, anyhow::Error>(b"DIFFERENT".to_vec())
+            })
+            .await
+            .unwrap();
+        assert_eq!(body, b"abc");
+        assert_eq!(called, 0, "compute closure should NOT be re-invoked on hit");
     }
 }
