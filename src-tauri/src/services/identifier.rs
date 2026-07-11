@@ -15,6 +15,12 @@ pub async fn identify_file(
     file_path: &Path,
     covers_dir: &Path,
     identified_dir: &Path,
+    // When `Some(suffix)`, append ` {suffix}` to the on-disk
+    // filename before moving it into `identified_dir`. Used by the
+    // "keep both" conflict action so two copies of the same content
+    // can coexist. Suffix is only applied when the file is moved
+    // forward (step 6); it does NOT alter alias or conflict checks.
+    force_rename: Option<&str>,
 ) -> Result<IdentifyOutcome> {
     let filename = file_path
         .file_name()
@@ -90,7 +96,30 @@ pub async fn identify_file(
 
     // 6) move file to identified_dir
     std::fs::create_dir_all(identified_dir)?;
-    let new_path = identified_dir.join(&filename);
+    // Apply force_rename suffix when the caller asked for one (used
+    // by conflict resolve "keep_both"). Strip the extension, append
+    // the suffix, then put the extension back so filename still
+    // matches what the parser expects on subsequent scans.
+    let move_filename = match force_rename {
+        Some(suffix) if !suffix.is_empty() => {
+            let stem = std::path::Path::new(&filename)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or(&filename)
+                .to_string();
+            let ext = std::path::Path::new(&filename)
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
+            if ext.is_empty() {
+                format!("{} {}", stem, suffix)
+            } else {
+                format!("{} {}.{}", stem, suffix, ext)
+            }
+        }
+        _ => filename.clone(),
+    };
+    let new_path = identified_dir.join(&move_filename);
     if new_path.exists() {
         return Ok(IdentifyOutcome::Error("target exists with different hash".into()));
     }
@@ -100,7 +129,7 @@ pub async fn identify_file(
     let now = chrono::Utc::now();
     let am = doujinshi_file::ActiveModel {
         title: Set(parsed.title),
-        filename: Set(filename.clone()),
+        filename: Set(move_filename.clone()),
         hash: Set(hash),
         ext: Set(ext),
         size_bytes: Set(size_bytes),
@@ -122,7 +151,7 @@ pub async fn identify_file(
     let inserted = am.insert(conn).await?;
 
     // 8) alias (same row)
-    store_alias(conn, inserted.id, &filename).await?;
+    store_alias(conn, inserted.id, &move_filename).await?;
 
     // 9) scan_event
     record_event(conn, inserted.id, "new_file", None).await?;

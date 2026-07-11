@@ -57,6 +57,7 @@ impl Scanner {
                 &p,
                 &self.covers_dir,
                 &self.identified_dir,
+                None,
             )
             .await?;
             log_outcome(&outcome);
