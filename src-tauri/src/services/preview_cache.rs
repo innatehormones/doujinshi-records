@@ -149,6 +149,20 @@ impl PreviewCache {
         self.evict_to_waterline_locked(&mut lru).await;
         Ok(())
     }
+
+    /// Remove all entries for a given file_id. Used by state_machine
+    /// when a zip is re-hashed / moved (rare path; mtime changes usually
+    /// invalidate naturally).
+    pub fn invalidate(&self, id: i64) {
+        let mut lru = self.inner.lock().unwrap();
+        let keys: Vec<CacheKey> = lru.iter().map(|(k, _)| *k).filter(|(k_id, _)| *k_id == id).collect();
+        for k in keys {
+            if let Some(entry) = lru.pop(&k) {
+                self.bytes_in_cache.fetch_sub(entry.body.len() as u64, Ordering::Relaxed);
+            }
+            let _ = std::fs::remove_file(self.entry_path(&k));
+        }
+    }
 }
 
 #[cfg(test)]
@@ -274,5 +288,28 @@ mod tests {
 
         cache.gc().await.unwrap();
         assert!(cache.bytes_in_cache() <= 64, "gc should drain to waterline; got {}", cache.bytes_in_cache());
+    }
+
+    #[tokio::test]
+    async fn invalidate_removes_all_entries_for_id() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = PreviewCache::new(dir.path(), 1024 * 1024).unwrap();
+        let k1 = (5, mtime_from_unix(1_700_000_200));
+        let k2 = (5, mtime_from_unix(1_700_000_201));
+        let k3 = (6, mtime_from_unix(1_700_000_202));
+        for k in [k1, k2, k3] {
+            let _ = cache.get_or_compute(k, || async { Ok::<_, anyhow::Error>(b"x".to_vec()) }).await.unwrap();
+        }
+        assert_eq!(cache.bytes_in_cache(), 3);
+
+        cache.invalidate(5);
+
+        assert_eq!(cache.bytes_in_cache(), 1);
+        assert!(cache.get(&k1).is_none());
+        assert!(cache.get(&k2).is_none());
+        assert!(cache.get(&k3).is_some());
+        assert!(!dir.path().join("5-1700000200.json").exists());
+        assert!(!dir.path().join("5-1700000201.json").exists());
+        assert!(dir.path().join("6-1700000202.json").exists());
     }
 }
