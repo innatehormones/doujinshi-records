@@ -2,7 +2,7 @@
 import { onMounted, watch, computed } from "vue"
 import { useRouter } from "vue-router"
 import { NGrid, NGi, NSpace, NInput, NSelect, NSpin, NEmpty, NTag, useMessage } from "naive-ui"
-import { useLibraryStore, useSettingsStore } from "@/stores"
+import { useLibraryStore, useSettingsStore, useRecycleStore } from "@/stores"
 import FileCard from "@/components/FileCard.vue"
 
 const store = useLibraryStore()
@@ -68,7 +68,6 @@ async function onCardMarkDelete(id: number) {
 
 async function onCardPermanentDelete(id: number) {
   try {
-    const { useRecycleStore } = await import("@/stores")
     await useRecycleStore().permanentDelete(id)
     await store.load()
   } catch (e) {
