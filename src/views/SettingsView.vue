@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted, computed } from "vue"
+import { ref, onMounted, computed, watch } from "vue"
 import {
   NCard, NSpace, NButton, NTag, NSpin, useMessage, NCode, NDivider,
+  NInputNumber, NSwitch,
 } from "naive-ui"
 import { useSettingsStore } from "@/stores"
 import { api } from "@/api/tauri"
@@ -11,7 +12,21 @@ const message = useMessage()
 const scanResult = ref<number | null>(null)
 const scanning = ref(false)
 
+const portInput = ref<number>(0)
+const portLocked = ref(false)
+
 onMounted(() => store.load())
+
+watch(
+  () => store.data,
+  (d) => {
+    if (d) {
+      portInput.value = d.http_port
+      portLocked.value = d.http_port_locked
+    }
+  },
+  { immediate: true },
+)
 
 async function copy(text: string) {
   try {
@@ -34,8 +49,20 @@ async function runScan() {
   }
 }
 
+async function savePort() {
+  await api.setHttpPort(portLocked.value ? portInput.value : 0)
+  message.success("已保存，重启后生效")
+}
+
+async function regenToken() {
+  const newToken = await api.regenerateAuthToken()
+  await store.load()
+  message.success("Token 已重新生成，旧 Token 立刻失效")
+  await copy(newToken)
+}
+
 const apiLines = computed(() => [
-  "GET  " + store.apiBase + "/api/health              健康检查",
+  "GET  " + store.apiBase + "/api/health              健康检查（无需 Token）",
   "GET  " + store.apiBase + "/api/doujinshi/search?q=关键词",
   "GET  " + store.apiBase + "/api/doujinshi/check?hash=<blake3>  检查哈希是否在库",
   "GET  " + store.apiBase + "/api/doujinshi/by-hash/<hash>       按哈希查询",
@@ -69,9 +96,56 @@ const apiLines = computed(() => [
         </n-button>
       </n-card>
 
+      <n-card title="HTTP 端口">
+        <p style="color: #aaa; font-size: 12px; margin-top: 0">
+          锁定端口 = 应用启动时尝试绑定这个端口；占用则按 100/200/300ms 重试 3 次后回退到随机端口。
+          关闭锁定 = 每次启动由操作系统分配空闲端口。
+        </p>
+        <n-space align="center">
+          <n-input-number
+            v-model:value="portInput"
+            :min="0"
+            :max="65535"
+            :disabled="!portLocked"
+            placeholder="0 = 随机"
+            style="width: 140px"
+          />
+          <n-switch v-model:value="portLocked" />
+          <span style="color: #aaa; font-size: 12px">
+            {{ portLocked ? "固定端口" : "随机端口" }}
+          </span>
+          <n-button type="primary" size="small" @click="savePort">
+            保存（重启后生效）
+          </n-button>
+          <n-tag v-if="store.data" size="small">
+            当前：{{ store.data.http_port }}（{{ store.data.http_port_locked ? "已锁定" : "随机" }}）
+          </n-tag>
+        </n-space>
+      </n-card>
+
+      <n-card title="HTTP Token">
+        <p style="color: #aaa; font-size: 12px; margin-top: 0">
+          浏览器扩展和外部脚本调用 HTTP API 时需要在 <code>Authorization: Bearer &lt;token&gt;</code> 头里带这个值。
+          重新生成后旧 Token 立刻失效。
+        </p>
+        <n-space align="center" style="width: 100%">
+          <n-code :code="store.data?.auth_token ?? ''" style="flex: 1; overflow-x: auto" />
+          <n-button size="small" @click="copy(store.data?.auth_token ?? '')">复制</n-button>
+          <n-button size="small" type="warning" @click="regenToken">重新生成</n-button>
+        </n-space>
+      </n-card>
+
+      <n-card title="Inbox 目录">
+        <p style="color: #aaa; font-size: 12px; margin-top: 0">
+          待识别压缩包放这里，应用会自动处理。
+        </p>
+        <n-input :value="store.data?.inbox_dir ?? ''" readonly />
+      </n-card>
+
       <n-card title="HTTP API（供浏览器扩展使用）">
         <p style="color: #aaa; font-size: 12px">
           本应用在 127.0.0.1 暴露本地 HTTP API，给外部工具（浏览器扩展、脚本）查询本库。
+          除 <code>/api/health</code> 外所有路由都需要带 <code>Authorization: Bearer &lt;token&gt;</code> 头（见上方 HTTP Token 卡片）。
         </p>
         <div style="margin-bottom: 8px">
           <span>接口地址: </span>

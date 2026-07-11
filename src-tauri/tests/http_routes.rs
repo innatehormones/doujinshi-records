@@ -282,6 +282,24 @@ async fn health_route_is_exempt_from_auth() {
 }
 
 #[tokio::test]
+async fn covers_route_is_exempt_from_auth() {
+    // Cover URLs are baked into <img src="..."> tags by the
+    // frontend, so they must work without an Authorization header.
+    let h = build_state_with_token("test-token-123").await;
+    let resp = router(h.state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/covers/deadbeef")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    // 404 because the row doesn't exist — but it must NOT be 401.
+    assert_ne!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
 async fn probe_and_recover_moves_corrupt_db() {
     use doujinshi_records::db::recovery::{probe_and_recover, RecoveryAction};
     let dir = tempfile::tempdir().unwrap();

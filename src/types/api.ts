@@ -20,6 +20,9 @@ export interface SettingsView {
   covers_dir: string
   api_url: string
   scanner_watching: boolean
+  auth_token: string
+  http_port: number
+  http_port_locked: boolean
 }
 
 export interface ConflictItem {

@@ -17,5 +17,7 @@ export const api = {
   resolveConflict: (id: number) => invoke<void>("resolve_conflict", { id }),
   getSettings: () => invoke<SettingsView>("get_settings"),
   manualScan: () => invoke<number>("manual_scan"),
+  regenerateAuthToken: () => invoke<string>("regenerate_auth_token"),
+  setHttpPort: (port: number) => invoke<void>("set_http_port", { port }),
 }
 

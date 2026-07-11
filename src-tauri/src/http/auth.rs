@@ -17,7 +17,13 @@ use crate::http::ApiState;
 
 /// Paths that bypass auth. Keep this list short — anything new here
 /// is a publicly-readable endpoint on a local loopback port.
-const ALLOW_PATHS: &[&str] = &["/api/health"];
+///
+/// `/api/covers/*` is exempt so browser `<img src="...">` tags can
+/// fetch covers without having to inject an Authorization header.
+/// Cover blobs are static image bytes — no sensitive data.
+fn is_exempt(path: &str) -> bool {
+    path == "/api/health" || path.starts_with("/api/covers/")
+}
 
 pub async fn require_auth(
     State(state): State<ApiState>,
@@ -25,7 +31,7 @@ pub async fn require_auth(
     next: Next,
 ) -> Response {
     let path = req.uri().path().to_string();
-    if ALLOW_PATHS.iter().any(|p| path == *p) {
+    if is_exempt(&path) {
         return next.run(req).await;
     }
     let header_val = req
