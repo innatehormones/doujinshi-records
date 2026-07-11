@@ -8,10 +8,14 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use axum::body::Body;
+use axum::http::Request;
 use doujinshi_records::db::{self, migrations};
 use doujinshi_records::http::{ApiState, build_test_router};
 use sea_orm::DatabaseConnection;
 use tempfile::TempDir;
+
+pub const TEST_TOKEN: &str = "test-token";
 
 pub struct Harness {
     pub state: ApiState,
@@ -20,6 +24,10 @@ pub struct Harness {
 }
 
 pub async fn build_state() -> Harness {
+    build_state_with_token(TEST_TOKEN).await
+}
+
+pub async fn build_state_with_token(token: &str) -> Harness {
     let resources_dir = tempfile::tempdir().expect("tempdir");
     let covers_dir = resources_dir.path().join("covers");
     std::fs::create_dir_all(&covers_dir).unwrap();
@@ -28,7 +36,11 @@ pub async fn build_state() -> Harness {
     migrations::init_schema_versioned(&conn).await.expect("init_schema");
     let covers = Arc::new(covers_dir.clone());
     Harness {
-        state: ApiState { conn, covers_dir: covers },
+        state: ApiState {
+            conn,
+            covers_dir: covers,
+            auth_token: Arc::new(token.to_string()),
+        },
         covers_dir,
         resources_dir,
     }
@@ -38,6 +50,19 @@ pub async fn build_state() -> Harness {
 /// thread. Used by the fast in-process tests.
 pub fn router(state: ApiState) -> axum::Router {
     build_test_router(state)
+}
+
+/// Build a request pre-loaded with the default test token. Auth-exempt
+/// paths (`/api/health`) ignore the header, so this is safe to use
+/// everywhere. Tests that specifically exercise 401/403 paths can
+/// ignore this helper and construct their own `Request` builder.
+pub fn authed_request(method: &str, uri: &str) -> Request<Body> {
+    Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("Authorization", format!("Bearer {}", TEST_TOKEN))
+        .body(Body::empty())
+        .unwrap()
 }
 
 /// Bind a real HTTP server on a free port and return the port + a
@@ -78,6 +103,7 @@ pub fn bind_real() -> (u16, std::sync::Arc<std::sync::atomic::AtomicBool>) {
                 let app = build_test_router(ApiState {
                     conn,
                     covers_dir: Arc::new(std::path::PathBuf::from(".")),
+                    auth_token: Arc::new("test-token".into()),
                 });
                 let server = axum::serve(tokio_listener, app)
                     .with_graceful_shutdown(async move {

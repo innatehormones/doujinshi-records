@@ -112,7 +112,7 @@ pub async fn init_schema(conn: &DatabaseConnection) -> Result<()> {
 // never edit an existing one. Each entry must be idempotent because
 // `init_schema_versioned` may be replayed against an already-upgraded DB.
 
-pub const CURRENT_VERSION: i64 = 2;
+pub const CURRENT_VERSION: i64 = 3;
 
 /// (version, human-readable name, body of the migration SQL to apply when
 /// moving from `version - 1` to `version`). Each migration must guard itself
@@ -127,6 +127,11 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         2,
         "add doujinshi_file.rating",
         "ALTER TABLE doujinshi_file ADD COLUMN rating INTEGER",
+    ),
+    (
+        3,
+        "add app_setting.auth_token",
+        "ALTER TABLE app_setting ADD COLUMN auth_token TEXT",
     ),
 ];
 
@@ -172,30 +177,33 @@ async fn apply_migration(conn: &DatabaseConnection, version: i64, body: &str) ->
         // v1 is the bootstrap — re-use the v0 init schema unchanged.
         return init_schema(conn).await;
     }
-    // For vN where N >= 2, ask the table whether the migration has
-    // already been applied (covers the case where the table was built
-    // by an older `init_schema` that already had the column).
+    // For vN where N >= 2, parse `ALTER TABLE <table> ADD COLUMN <col>` and
+    // ask the table whether the migration has already been applied (covers
+    // the case where the table was built by an older `init_schema` that
+    // already had the column). Falls through to a plain execute for any
+    // other SQL body.
     let backend = conn.get_database_backend();
-    if body.starts_with("ALTER TABLE doujinshi_file ADD COLUMN ") {
-        let col = body
-            .trim_start_matches("ALTER TABLE doujinshi_file ADD COLUMN ")
-            .split_whitespace()
-            .next()
-            .unwrap_or("");
-        let rows: Vec<QueryResult> = conn
-            .query_all(Statement::from_string(
-                backend.clone(),
-                format!(
-                    "SELECT name FROM pragma_table_info('doujinshi_file') WHERE name='{}'",
-                    col
-                ),
-            ))
-            .await?;
-        if rows.is_empty() {
-            conn.execute(Statement::from_string(backend, body.to_string()))
-                .await?;
+    let trimmed = body.trim();
+    if let Some(rest) = trimmed.strip_prefix("ALTER TABLE ") {
+        if let Some((table, after_table)) = rest.split_once(' ') {
+            if let Some(col_part) = after_table.strip_prefix("ADD COLUMN ") {
+                let col = col_part.split_whitespace().next().unwrap_or("");
+                let rows: Vec<QueryResult> = conn
+                    .query_all(Statement::from_string(
+                        backend.clone(),
+                        format!(
+                            "SELECT name FROM pragma_table_info('{}') WHERE name='{}'",
+                            table, col
+                        ),
+                    ))
+                    .await?;
+                if rows.is_empty() {
+                    conn.execute(Statement::from_string(backend, body.to_string()))
+                        .await?;
+                }
+                return Ok(());
+            }
         }
-        return Ok(());
     }
     conn.execute(Statement::from_string(backend, body.to_string()))
         .await?;

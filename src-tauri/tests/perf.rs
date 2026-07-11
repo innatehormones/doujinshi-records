@@ -8,7 +8,7 @@ use axum::body::Body;
 use axum::http::Request;
 use axum::Router;
 use chrono::Utc;
-use common::{build_state, router};
+use common::{build_state, router, TEST_TOKEN};
 use doujinshi_records::db::entities::doujinshi_file;
 use sea_orm::{EntityTrait, Set};
 use std::time::{Duration, Instant};
@@ -59,6 +59,7 @@ async fn run_samples(app: &Router, uris: &[&str], n: usize, label: &str) -> Vec<
             .oneshot(
                 Request::builder()
                     .uri(*uri)
+                    .header("Authorization", format!("Bearer {}", TEST_TOKEN))
                     .body(Body::empty())
                     .unwrap(),
             )
@@ -74,6 +75,7 @@ async fn run_samples(app: &Router, uris: &[&str], n: usize, label: &str) -> Vec<
             .oneshot(
                 Request::builder()
                     .uri(uri)
+                    .header("Authorization", format!("Bearer {}", TEST_TOKEN))
                     .body(Body::empty())
                     .unwrap(),
             )

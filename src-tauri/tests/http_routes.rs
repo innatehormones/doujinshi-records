@@ -2,7 +2,7 @@ mod common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use common::{build_state, router};
+use common::{authed_request, build_state, build_state_with_token, router};
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
@@ -25,7 +25,7 @@ async fn health_returns_ok_json() {
 async fn search_empty_db_returns_zero_items() {
     let h = build_state().await;
     let resp = router(h.state)
-        .oneshot(Request::builder().uri("/api/doujinshi/search?q=anything").body(Body::empty()).unwrap())
+        .oneshot(authed_request("GET", "/api/doujinshi/search?q=anything"))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
@@ -39,12 +39,7 @@ async fn search_empty_db_returns_zero_items() {
 async fn by_hash_returns_null_when_missing() {
     let h = build_state().await;
     let resp = router(h.state)
-        .oneshot(
-            Request::builder()
-                .uri("/api/doujinshi/by-hash/deadbeef")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(authed_request("GET", "/api/doujinshi/by-hash/deadbeef"))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
@@ -56,12 +51,7 @@ async fn by_hash_returns_null_when_missing() {
 async fn by_id_returns_404_when_missing() {
     let h = build_state().await;
     let resp = router(h.state)
-        .oneshot(
-            Request::builder()
-                .uri("/api/doujinshi/999999")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(authed_request("GET", "/api/doujinshi/999999"))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
@@ -71,12 +61,7 @@ async fn by_id_returns_404_when_missing() {
 async fn cover_returns_404_when_hash_unknown() {
     let h = build_state().await;
     let resp = router(h.state)
-        .oneshot(
-            Request::builder()
-                .uri("/api/covers/deadbeef")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(authed_request("GET", "/api/covers/deadbeef"))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
@@ -101,12 +86,10 @@ async fn cover_returns_404_when_row_exists_but_no_cover_path() {
     };
     am.insert(&h.state.conn).await.unwrap();
     let resp = router(h.state)
-        .oneshot(
-            Request::builder()
-                .uri("/api/covers/abc123abc123abc123abc123abc123abc123abc123abc123abc123abc1")
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(authed_request(
+            "GET",
+            "/api/covers/abc123abc123abc123abc123abc123abc123abc123abc123abc123abc1",
+        ))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
@@ -117,7 +100,6 @@ async fn cover_returns_jpeg_when_file_present() {
     use doujinshi_records::db::entities::doujinshi_file;
     use sea_orm::{ActiveModelTrait, Set};
     let h = build_state().await;
-    // Write a 2x2 white JPEG to covers/ so the route can serve it.
     let hash = "fff000fff000fff000fff000fff000fff000fff000fff000fff000fff000fff0";
     let cover_abs = h.covers_dir.join(format!("{}.jpg", hash));
     let img = image::RgbImage::from_fn(2, 2, |_, _| image::Rgb([255, 255, 255]));
@@ -147,12 +129,7 @@ async fn cover_returns_jpeg_when_file_present() {
     };
     am.insert(&h.state.conn).await.unwrap();
     let resp = router(h.state)
-        .oneshot(
-            Request::builder()
-                .uri(format!("/api/covers/{}", hash))
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(authed_request("GET", &format!("/api/covers/{}", hash)))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
@@ -165,7 +142,6 @@ async fn cover_returns_jpeg_when_file_present() {
         .starts_with("image/jpeg"));
     let bytes = resp.into_body().collect().await.unwrap().to_bytes();
     assert!(bytes.len() > 100, "expected non-trivial jpeg, got {} bytes", bytes.len());
-    // JPEG SOI marker
     assert_eq!(&bytes[..3], &[0xFF, 0xD8, 0xFF]);
 }
 
@@ -176,7 +152,6 @@ async fn cover_serves_placeholder_when_disk_file_missing() {
     let h = build_state().await;
     let hash = "ccc111ccc111ccc111ccc111ccc111ccc111ccc111ccc111ccc111ccc111ccc1";
     let rel = format!("covers/{}.jpg", hash);
-    // NB: do NOT write the file to disk; cover_path points at a missing file.
     let am = doujinshi_file::ActiveModel {
         title: Set("ghost cover".into()),
         filename: Set("ghost_cover.zip".into()),
@@ -192,12 +167,7 @@ async fn cover_serves_placeholder_when_disk_file_missing() {
     };
     am.insert(&h.state.conn).await.unwrap();
     let resp = router(h.state)
-        .oneshot(
-            Request::builder()
-                .uri(format!("/api/covers/{}", hash))
-                .body(Body::empty())
-                .unwrap(),
-        )
+        .oneshot(authed_request("GET", &format!("/api/covers/{}", hash)))
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
@@ -217,7 +187,6 @@ async fn search_filters_by_title_and_status() {
     use sea_orm::{ActiveModelTrait, Set};
     let h = build_state().await;
     let now = Utc::now();
-    let mut rows = vec![];
     for (i, (title, viewed, marked)) in [
         ("Hatsune Miku 2024", false, false),
         ("Hatsune Miku 2025", true, false),
@@ -241,23 +210,75 @@ async fn search_filters_by_title_and_status() {
             updated_at: Set(now),
             ..Default::default()
         };
-        let inserted = am.insert(&h.state.conn).await.unwrap();
-        rows.push(inserted.id);
+        am.insert(&h.state.conn).await.unwrap();
     }
-    // q=Hatsune (title contains) -> 2 rows
-    let resp = router(h.state.clone())
+    let resp = router(h.state)
+        .oneshot(authed_request("GET", "/api/doujinshi/search?q=Hatsune"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["total"], 2, "expected 2 Hatsune rows");
+}
+
+// ===== Auth middleware tests =====
+
+#[tokio::test]
+async fn protected_route_returns_401_without_token() {
+    let h = build_state_with_token("test-token-123").await;
+    let resp = router(h.state)
         .oneshot(
             Request::builder()
-                .uri("/api/doujinshi/search?q=Hatsune")
+                .uri("/api/doujinshi/search")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn protected_route_returns_401_with_wrong_token() {
+    let h = build_state_with_token("test-token-123").await;
+    let resp = router(h.state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/doujinshi/search")
+                .header("Authorization", "Bearer wrong-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn protected_route_returns_200_with_correct_token() {
+    let h = build_state_with_token("test-token-123").await;
+    let resp = router(h.state)
+        .oneshot(
+            Request::builder()
+                .uri("/api/doujinshi/search")
+                .header("Authorization", "Bearer test-token-123")
                 .body(Body::empty())
                 .unwrap(),
         )
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
-    let body = resp.into_body().collect().await.unwrap().to_bytes();
-    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert_eq!(v["total"], 2, "expected 2 Hatsune rows: {}", body.len());
+}
+
+#[tokio::test]
+async fn health_route_is_exempt_from_auth() {
+    let h = build_state_with_token("test-token-123").await;
+    let resp = router(h.state)
+        .oneshot(Request::builder().uri("/api/health").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
 }
 
 #[tokio::test]
@@ -281,7 +302,6 @@ async fn probe_and_recover_noop_when_db_is_valid() {
     use doujinshi_records::db::recovery::{probe_and_recover, RecoveryAction};
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("data.db");
-    // Connect once to produce a fresh valid SQLite file, then close.
     {
         let conn = doujinshi_records::db::connect(&db_path).await.unwrap();
         doujinshi_records::db::migrations::init_schema(&conn).await.unwrap();

@@ -32,9 +32,27 @@ pub async fn run(cfg: config::AppConfig, conn: DatabaseConnection) {
     }
 
     let covers_dir = Arc::new(cfg.covers_dir());
+
+    // First-launch token bootstrap: read app_setting.auth_token; if
+    // missing, generate a fresh 32-byte URL-safe base64 token and persist
+    // it. Never log the token value — it is the bearer credential that
+    // protects every non-exempt HTTP route (see http::auth).
+    let auth_token = match db::read_setting(&conn, "auth_token").await {
+        Ok(Some(t)) if !t.is_empty() => t,
+        _ => {
+            let new = http::auth_token::generate();
+            if let Err(e) = db::write_setting(&conn, "auth_token", &new).await {
+                eprintln!("failed to persist auth_token: {:?}", e);
+            }
+            new
+        }
+    };
+    let auth_token = Arc::new(auth_token);
+
     let api_state = http::ApiState {
         conn: conn.clone(),
         covers_dir: covers_dir.clone(),
+        auth_token: auth_token.clone(),
     };
 
     // Try the previously-persisted HTTP port first; fall back to a free
