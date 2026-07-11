@@ -8,6 +8,7 @@
 //! can keep using the bare URL — this client is for the JSON API only.
 
 import { useSettingsStore } from "@/stores"
+import type { ConflictCompare, DetailImagesResponse, MetadataPatch } from "@/types/api"
 
 export class ApiError extends Error {
   status: number
@@ -50,4 +51,29 @@ export async function apiPost(path: string): Promise<Response> {
   const base = await ensureBase()
   const headers = await authHeader()
   return fetch(base + path, { method: "POST", headers })
+}
+
+export async function apiPatch(path: string, body: unknown): Promise<Response> {
+  const base = await ensureBase()
+  const headers = {
+    ...(await authHeader()),
+    "Content-Type": "application/json",
+  }
+  return fetch(base + path, {
+    method: "PATCH",
+    headers,
+    body: JSON.stringify(body),
+  })
+}
+
+export async function fetchCompare(conflictId: number): Promise<ConflictCompare> {
+  return apiGet<ConflictCompare>(`/api/conflicts/${conflictId}/compare`)
+}
+
+export async function fetchDetailImages(id: number): Promise<DetailImagesResponse> {
+  return apiGet<DetailImagesResponse>(`/api/doujinshi/${id}/images`)
+}
+
+export async function patchMetadata(id: number, patch: MetadataPatch): Promise<Response> {
+  return apiPatch(`/api/doujinshi/${id}`, patch)
 }

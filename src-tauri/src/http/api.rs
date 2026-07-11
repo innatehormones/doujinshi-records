@@ -1,6 +1,7 @@
 use crate::db::entities::doujinshi_file;
 use crate::http::ApiState;
 use crate::models::file_summary;
+use base64::Engine;
 use axum::extract::{Path, Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::IntoResponse;
@@ -187,6 +188,9 @@ pub struct CompareSide {
     pub hash: Option<String>,
     pub cover_url: Option<String>,
     pub image_names: Vec<String>,
+    /// Absolute path on disk. A side reads this from
+    /// `doujinshi_file.current_path`; B side from `conflict.b_file_path`.
+    pub file_path: String,
     /// True when the archive file no longer exists on disk.
     pub zip_missing: bool,
     /// Set when the archive is on disk but couldn't be parsed
@@ -232,6 +236,7 @@ pub async fn compare(
                 hash: Some(hash.clone()),
                 cover_url: cover_url_for(&hash),
                 image_names: names,
+                file_path: m.current_path.clone(),
                 zip_missing: missing,
                 zip_error: err,
             }
@@ -242,6 +247,7 @@ pub async fn compare(
             hash: None,
             cover_url: None,
             image_names: vec![],
+            file_path: String::new(),
             zip_missing: false,
             zip_error: None,
         },
@@ -255,6 +261,7 @@ pub async fn compare(
         hash: row.b_hash,
         cover_url: None,
         image_names: names,
+        file_path: row.b_file_path.clone(),
         zip_missing: missing,
         zip_error: err,
     };
@@ -280,4 +287,101 @@ fn read_image_names(path: &str) -> (Vec<String>, bool, Option<String>) {
 /// Path-only cover URL — the SPA prepends `useSettingsStore.apiBase`.
 fn cover_url_for(hash: &str) -> Option<String> {
     Some(format!("/api/covers/by-hash/{}", hash))
+}
+
+// ===== V2 DetailView =====
+
+#[derive(Serialize)]
+pub struct ImageEntry {
+    pub name: String,
+    /// `data:image/{ext};base64,...` — directly usable in `<img src>`.
+    pub data_url: String,
+}
+
+#[derive(Serialize)]
+pub struct ImagesResponse {
+    pub file_id: i64,
+    pub images: Vec<ImageEntry>,
+    /// `true` when the archive file no longer exists on disk — the
+    /// SPA still gets a 200 so the carousel can render an alert
+    /// instead of an error.
+    pub zip_missing: bool,
+}
+
+/// `GET /api/doujinshi/:id/images` — return every image inside the
+/// archive as base64 `data:` URLs so the SPA can render them
+/// without setting up its own file-serving endpoint.
+pub async fn images(
+    State(s): State<ApiState>,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
+    use sea_orm::EntityTrait;
+    let row = match doujinshi_file::Entity::find_by_id(id).one(&s.conn).await {
+        Ok(Some(r)) => r,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    };
+    let path = std::path::Path::new(&row.current_path);
+    if !path.exists() {
+        return (
+            StatusCode::OK,
+            Json(json!(ImagesResponse {
+                file_id: id,
+                images: vec![],
+                zip_missing: true,
+            })),
+        )
+            .into_response();
+    }
+    match crate::services::archive::list_images(path) {
+        Ok(entries) => {
+            let images = entries
+                .into_iter()
+                .map(|e| {
+                    let b64 = base64::engine::general_purpose::STANDARD.encode(&e.data);
+                    ImageEntry {
+                        data_url: format!("data:image/{};base64,{}", guess_image_ext(&e.name), b64),
+                        name: e.name,
+                    }
+                })
+                .collect();
+            (
+                StatusCode::OK,
+                Json(json!(ImagesResponse {
+                    file_id: id,
+                    images,
+                    zip_missing: false,
+                })),
+            )
+                .into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
+
+fn guess_image_ext(name: &str) -> &'static str {
+    let lower = name.to_lowercase();
+    if lower.ends_with(".png") {
+        "png"
+    } else if lower.ends_with(".webp") {
+        "webp"
+    } else {
+        "jpeg"
+    }
+}
+
+/// `PATCH /api/doujinshi/:id` — partial metadata update. Body shape
+/// is `MetadataPatch`; only fields present in the JSON are written.
+pub async fn patch_metadata(
+    State(s): State<ApiState>,
+    Path(id): Path<i64>,
+    Json(patch): Json<crate::commands::library::MetadataPatch>,
+) -> impl IntoResponse {
+    match crate::commands::library::apply_metadata_patch(&s.conn, id, patch).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(crate::error::AppError::Other(msg)) if msg.contains("not found") => {
+            StatusCode::NOT_FOUND.into_response()
+        }
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
 }

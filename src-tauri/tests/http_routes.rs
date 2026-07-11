@@ -2,7 +2,7 @@ mod common;
 
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use common::{authed_request, build_state, build_state_with_token, router};
+use common::{authed_request, build_state, build_state_with_token, router, TEST_TOKEN};
 use http_body_util::BodyExt;
 use tower::ServiceExt;
 
@@ -329,4 +329,213 @@ async fn probe_and_recover_noop_when_db_is_valid() {
         matches!(result, RecoveryAction::Noop),
         "valid db should not be backed up"
     );
+}
+
+// ===== V2 DetailView endpoint coverage =====
+
+fn build_test_zip(entries: &[(&str, &[u8])]) -> Vec<u8> {
+    use std::io::Write;
+    let mut buf = std::io::Cursor::new(Vec::<u8>::new());
+    {
+        let mut zw = zip::ZipWriter::new(&mut buf);
+        let opts = zip::write::SimpleFileOptions::default();
+        for (name, data) in entries {
+            zw.start_file(*name, opts).unwrap();
+            zw.write_all(data).unwrap();
+        }
+        zw.finish().unwrap();
+    }
+    buf.into_inner()
+}
+
+async fn seed_file_with_zip(
+    conn: &sea_orm::DatabaseConnection,
+    zip_path: &std::path::Path,
+    filename: &str,
+) -> i64 {
+    use doujinshi_records::db::entities::doujinshi_file;
+    use sea_orm::{ActiveModelTrait, Set};
+    let am = doujinshi_file::ActiveModel {
+        title: Set("seeded".into()),
+        filename: Set(filename.to_string()),
+        hash: Set("seed-hash".into()),
+        ext: Set("zip".into()),
+        size_bytes: Set(std::fs::metadata(zip_path).unwrap().len() as i64),
+        current_path: Set(zip_path.to_string_lossy().into_owned()),
+        current_location: Set("identified".into()),
+        created_at: Set(chrono::Utc::now()),
+        updated_at: Set(chrono::Utc::now()),
+        ..Default::default()
+    };
+    am.insert(conn).await.unwrap().id
+}
+
+#[tokio::test]
+async fn images_returns_entries_when_zip_present() {
+    let h = build_state().await;
+    let zip = h.resources_dir.path().join("d.zip");
+    std::fs::write(
+        &zip,
+        build_test_zip(&[
+            ("01.jpg", b"jpg-data"),
+            ("02.png", b"png-data"),
+            ("readme.txt", b"hi"),
+        ]),
+    )
+    .unwrap();
+    let id = seed_file_with_zip(&h.state.conn, &zip, "d.zip").await;
+
+    let resp = router(h.state)
+        .oneshot(authed_request("GET", &format!("/api/doujinshi/{}/images", id)))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["file_id"].as_i64().unwrap(), id);
+    assert_eq!(v["zip_missing"].as_bool().unwrap(), false);
+    let images = v["images"].as_array().unwrap();
+    assert_eq!(images.len(), 2);
+    for img in images {
+        let url = img["data_url"].as_str().unwrap();
+        assert!(url.starts_with("data:image/"), "got {}", url);
+    }
+}
+
+#[tokio::test]
+async fn images_returns_zip_missing_true_when_file_gone() {
+    use doujinshi_records::db::entities::doujinshi_file;
+    use sea_orm::{ActiveModelTrait, Set};
+    let h = build_state().await;
+    let am = doujinshi_file::ActiveModel {
+        title: Set("ghost".into()),
+        filename: Set("ghost.zip".into()),
+        hash: Set("g".into()),
+        ext: Set("zip".into()),
+        size_bytes: Set(0),
+        current_path: Set("/nonexistent/ghost.zip".into()),
+        current_location: Set("identified".into()),
+        created_at: Set(chrono::Utc::now()),
+        updated_at: Set(chrono::Utc::now()),
+        ..Default::default()
+    };
+    let id = am.insert(&h.state.conn).await.unwrap().id;
+
+    let resp = router(h.state)
+        .oneshot(authed_request("GET", &format!("/api/doujinshi/{}/images", id)))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["zip_missing"].as_bool().unwrap(), true);
+    assert_eq!(v["images"].as_array().unwrap().len(), 0);
+}
+
+#[tokio::test]
+async fn images_returns_404_when_id_missing() {
+    let h = build_state().await;
+    let resp = router(h.state)
+        .oneshot(authed_request("GET", "/api/doujinshi/999999/images"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+}
+
+fn patch_request(uri: &str, body: serde_json::Value) -> Request<Body> {
+    Request::builder()
+        .method("PATCH")
+        .uri(uri)
+        .header("Authorization", format!("Bearer {}", TEST_TOKEN))
+        .header("Content-Type", "application/json")
+        .body(Body::from(body.to_string()))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn patch_updates_title_and_returns_204() {
+    use doujinshi_records::db::entities::doujinshi_file;
+    use sea_orm::{ActiveModelTrait, EntityTrait, Set};
+    let h = build_state().await;
+    let am = doujinshi_file::ActiveModel {
+        title: Set("旧".into()),
+        filename: Set("p.zip".into()),
+        hash: Set("ph".into()),
+        ext: Set("zip".into()),
+        size_bytes: Set(0),
+        circle: Set(Some("旧社团".into())),
+        current_path: Set("/tmp/p.zip".into()),
+        current_location: Set("identified".into()),
+        created_at: Set(chrono::Utc::now()),
+        updated_at: Set(chrono::Utc::now()),
+        ..Default::default()
+    };
+    let id = am.insert(&h.state.conn).await.unwrap().id;
+
+    let resp = router(h.state.clone())
+        .oneshot(patch_request(
+            &format!("/api/doujinshi/{}", id),
+            serde_json::json!({ "title": "新", "note": "memo" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    let row = doujinshi_file::Entity::find_by_id(id)
+        .one(&h.state.conn)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.title, "新");
+    assert_eq!(row.circle.as_deref(), Some("旧社团"));
+    assert_eq!(row.note.as_deref(), Some("memo"));
+}
+
+#[tokio::test]
+async fn patch_with_empty_body_is_noop() {
+    use doujinshi_records::db::entities::doujinshi_file;
+    use sea_orm::{ActiveModelTrait, EntityTrait, Set};
+    let h = build_state().await;
+    let am = doujinshi_file::ActiveModel {
+        title: Set("保持".into()),
+        filename: Set("n.zip".into()),
+        hash: Set("nh".into()),
+        ext: Set("zip".into()),
+        size_bytes: Set(0),
+        current_path: Set("/tmp/n.zip".into()),
+        current_location: Set("identified".into()),
+        created_at: Set(chrono::Utc::now()),
+        updated_at: Set(chrono::Utc::now()),
+        ..Default::default()
+    };
+    let id = am.insert(&h.state.conn).await.unwrap().id;
+
+    let resp = router(h.state.clone())
+        .oneshot(patch_request(
+            &format!("/api/doujinshi/{}", id),
+            serde_json::json!({}),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    let row = doujinshi_file::Entity::find_by_id(id)
+        .one(&h.state.conn)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.title, "保持");
+}
+
+#[tokio::test]
+async fn patch_unknown_id_returns_404() {
+    let h = build_state().await;
+    let resp = router(h.state)
+        .oneshot(patch_request(
+            "/api/doujinshi/999999",
+            serde_json::json!({ "title": "x" }),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }

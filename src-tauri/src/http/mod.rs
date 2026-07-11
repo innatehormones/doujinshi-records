@@ -45,7 +45,13 @@ pub fn build_router(state: ApiState, preferred_port: Option<u16>) -> Result<u16>
         // literal "check" path is not eaten by the `:hash` wildcard.
         .route("/api/doujinshi/check", get(api::check))
         .route("/api/doujinshi/by-hash/:hash", get(api::by_hash))
-        .route("/api/doujinshi/:id", get(api::by_id))
+        // V2: PATCH metadata + GET by id share the same path. The
+        // :id/images sibling is registered just below.
+        .route(
+            "/api/doujinshi/:id",
+            get(api::by_id).patch(api::patch_metadata),
+        )
+        .route("/api/doujinshi/:id/images", get(api::images))
         .route("/api/doujinshi/:id/viewed", axum::routing::post(api::mark_viewed_http))
         // V2: same as /api/covers/:file_id but hash-keyed. Must
         // come before the :file_id wildcard.
@@ -121,7 +127,11 @@ pub fn build_test_router(state: ApiState) -> axum::Router {
         .route("/api/doujinshi/search", get(api::search))
         .route("/api/doujinshi/check", get(api::check))
         .route("/api/doujinshi/by-hash/:hash", get(api::by_hash))
-        .route("/api/doujinshi/:id", get(api::by_id))
+        .route(
+            "/api/doujinshi/:id",
+            get(api::by_id).patch(api::patch_metadata),
+        )
+        .route("/api/doujinshi/:id/images", get(api::images))
         .route("/api/doujinshi/:id/viewed", axum::routing::post(api::mark_viewed_http))
         .route("/api/covers/by-hash/:hash", get(api::cover_by_hash))
         .route("/api/covers/:file_id", get(api::cover))
