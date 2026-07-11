@@ -9,6 +9,7 @@ const props = defineProps<{
 const emit = defineEmits<{
 (e: 'viewed', id: number): void
 (e: 'delete', id: number): void
+(e: 'open', id: number): void
 }>()
 
 function coverSrc(): string {
@@ -24,7 +25,7 @@ function formatSize(bytes: number): string {
 </script>
 
 <template>
-  <article class="card">
+  <article class="card" @click="emit('open', file.id)">
     <div class="cover">
       <img v-if="file.cover_url" :src="coverSrc()" alt="" />
       <div v-else class="no-cover">
@@ -42,7 +43,7 @@ function formatSize(bytes: number): string {
         <span v-if="file.circle" class="circle">{{ file.circle }}</span>
         <span class="size mono">{{ formatSize(file.size_bytes) }}</span>
       </div>
-      <div class="actions">
+      <div class="actions" @click.stop>
         <button class="btn" @click="emit('viewed', file.id)">
           {{ file.viewed ? "取消已看" : "标记已看" }}
         </button>
