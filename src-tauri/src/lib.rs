@@ -6,7 +6,7 @@ pub mod http;
 pub mod models;
 pub mod services;
 
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use sea_orm::DatabaseConnection;
 
 pub struct AppState {
@@ -14,6 +14,9 @@ pub struct AppState {
     pub scanner: Arc<services::scanner::Scanner>,
     pub covers_dir: Arc<std::path::PathBuf>,
     pub config: config::AppConfig,
+    /// Bearer token. `RwLock` so `regenerate_auth_token` can swap the
+    /// value at runtime without dropping HTTP requests.
+    pub auth_token: Arc<RwLock<String>>,
 }
 
 pub async fn run(cfg: config::AppConfig, conn: DatabaseConnection) {
@@ -47,7 +50,7 @@ pub async fn run(cfg: config::AppConfig, conn: DatabaseConnection) {
             new
         }
     };
-    let auth_token = Arc::new(auth_token);
+    let auth_token = Arc::new(RwLock::new(auth_token));
 
     let api_state = http::ApiState {
         conn: conn.clone(),
@@ -81,6 +84,7 @@ pub async fn run(cfg: config::AppConfig, conn: DatabaseConnection) {
         scanner: scanner.clone(),
         covers_dir,
         config: cfg_clone,
+        auth_token: auth_token.clone(),
     };
 
     tauri::Builder::default()
@@ -111,6 +115,8 @@ pub async fn run(cfg: config::AppConfig, conn: DatabaseConnection) {
             commands::inbox::resolve_conflict,
             commands::settings::get_settings,
             commands::settings::manual_scan,
+            commands::settings::regenerate_auth_token,
+            commands::settings::set_http_port,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

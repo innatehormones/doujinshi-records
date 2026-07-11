@@ -32,7 +32,14 @@ pub async fn require_auth(
         .headers()
         .get(header::AUTHORIZATION)
         .and_then(|v| v.to_str().ok());
-    let expected = format!("Bearer {}", state.auth_token);
+    // Snapshot the live token so a concurrent regeneration doesn't
+    // race the comparison. A failed read is treated as an internal
+    // error and yields 500 rather than silently granting access.
+    let token_snapshot = match state.auth_token.read() {
+        Ok(t) => t.clone(),
+        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "token lock poisoned").into_response(),
+    };
+    let expected = format!("Bearer {}", token_snapshot);
     match header_val {
         Some(h) if h == expected => next.run(req).await,
         Some(_) => (StatusCode::UNAUTHORIZED, "bad token").into_response(),

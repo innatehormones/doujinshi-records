@@ -1,4 +1,4 @@
-﻿use std::sync::Arc;
+﻿use std::sync::{Arc, RwLock};
 use anyhow::{Context, Result};
 use axum::Router;
 use sea_orm::DatabaseConnection;
@@ -14,7 +14,10 @@ pub mod port_allocator;
 pub struct ApiState {
     pub conn: DatabaseConnection,
     pub covers_dir: Arc<std::path::PathBuf>,
-    pub auth_token: Arc<String>,
+    /// Bearer token checked by `auth::require_auth`. Wrapped in
+    /// `RwLock` so the `regenerate_auth_token` Tauri command can swap
+    /// the value without restarting the HTTP listener.
+    pub auth_token: Arc<RwLock<String>>,
 }
 
 pub struct Port(pub u16);

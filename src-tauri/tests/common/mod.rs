@@ -6,7 +6,7 @@
 #![allow(dead_code)]
 
 use std::path::PathBuf;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 
 use axum::body::Body;
 use axum::http::Request;
@@ -39,7 +39,7 @@ pub async fn build_state_with_token(token: &str) -> Harness {
         state: ApiState {
             conn,
             covers_dir: covers,
-            auth_token: Arc::new(token.to_string()),
+            auth_token: Arc::new(RwLock::new(token.to_string())),
         },
         covers_dir,
         resources_dir,
@@ -103,7 +103,7 @@ pub fn bind_real() -> (u16, std::sync::Arc<std::sync::atomic::AtomicBool>) {
                 let app = build_test_router(ApiState {
                     conn,
                     covers_dir: Arc::new(std::path::PathBuf::from(".")),
-                    auth_token: Arc::new("test-token".into()),
+                    auth_token: Arc::new(RwLock::new("test-token".into())),
                 });
                 let server = axum::serve(tokio_listener, app)
                     .with_graceful_shutdown(async move {
