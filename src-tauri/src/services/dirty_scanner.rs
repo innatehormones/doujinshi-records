@@ -56,6 +56,12 @@ async fn scan_dir(
         if !e.file_type().is_file() {
             continue;
         }
+        // `.gitkeep` 是仓库占位文件，git tracking 一个空目录用的；它
+        // 不是真实的同人志文件，启动扫描不应把它当成 orphan 写入
+        // dirty_data 表。
+        if e.file_name().to_string_lossy() == ".gitkeep" {
+            continue;
+        }
         let path = e.path().to_string_lossy().into_owned();
         let size = e.metadata().map(|m| m.len() as i64).unwrap_or(0);
 
@@ -209,6 +215,28 @@ mod tests {
 
         assert_eq!(report.orphans, 0);
         assert_eq!(report.db_missing_files, 0);
+        let rows = dirty_data::Entity::find().all(&conn).await.unwrap();
+        assert_eq!(rows.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn scan_ignores_gitkeep() {
+        // .gitkeep 是仓库占位文件，不是真同人志，扫描要跳过。
+        let dir = tempfile::tempdir().unwrap();
+        let identified = dir.path().join("identified");
+        let will_delete = dir.path().join("will_delete");
+        let archived = dir.path().join("archived");
+        std::fs::create_dir_all(&identified).unwrap();
+        std::fs::create_dir_all(&will_delete).unwrap();
+        std::fs::create_dir_all(&archived).unwrap();
+        touch(&identified.join(".gitkeep"));
+        touch(&will_delete.join(".gitkeep"));
+        touch(&archived.join(".gitkeep"));
+
+        let conn = open_db(dir.path()).await;
+        let report = scan(&conn, &identified, &will_delete, &archived).await.unwrap();
+
+        assert_eq!(report.orphans, 0, ".gitkeep must not appear in dirty_data");
         let rows = dirty_data::Entity::find().all(&conn).await.unwrap();
         assert_eq!(rows.len(), 0);
     }
