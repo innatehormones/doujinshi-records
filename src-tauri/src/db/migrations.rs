@@ -112,7 +112,7 @@ pub async fn init_schema(conn: &DatabaseConnection) -> Result<()> {
 // never edit an existing one. Each entry must be idempotent because
 // `init_schema_versioned` may be replayed against an already-upgraded DB.
 
-pub const CURRENT_VERSION: i64 = 3;
+pub const CURRENT_VERSION: i64 = 5;
 
 /// (version, human-readable name, body of the migration SQL to apply when
 /// moving from `version - 1` to `version`). Each migration must guard itself
@@ -132,6 +132,23 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         3,
         "add app_setting.auth_token",
         "ALTER TABLE app_setting ADD COLUMN auth_token TEXT",
+    ),
+    (
+        4,
+        "add doujinshi_file.has_physical_file",
+        "ALTER TABLE doujinshi_file ADD COLUMN has_physical_file INTEGER NOT NULL DEFAULT 1",
+    ),
+    (
+        5,
+        "create dirty_data table",
+        "CREATE TABLE IF NOT EXISTS dirty_data (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            file_path TEXT NOT NULL UNIQUE,
+            file_size INTEGER NOT NULL,
+            detected_dir TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            first_seen_at TEXT NOT NULL
+        )",
     ),
 ];
 

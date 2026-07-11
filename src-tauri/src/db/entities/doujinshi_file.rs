@@ -19,6 +19,7 @@ pub struct Model {
     pub cover_path: Option<String>,
     pub marked_for_delete: bool,
     pub physically_deleted: bool,
+    pub has_physical_file: bool,
     pub viewed: bool,
     pub note: Option<String>,
     pub rating: Option<i32>,
