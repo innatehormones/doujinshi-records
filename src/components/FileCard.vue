@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { NPopconfirm } from "naive-ui"
 import type { FileSummary } from '@/types/api'
 
 const props = defineProps<{
@@ -62,24 +63,45 @@ function locationLabel(): string {
           {{ file.viewed ? "取消已看" : "标记已看" }}
         </button>
 
-        <!-- identified: 归档 + 删除 -->
+        <!-- identified: 归档 + 移到回收站 -->
         <template v-if="file.current_location === 'identified'">
-          <button class="btn" @click="emit('archive', file.id)">归档</button>
-          <button class="btn btn-warn" @click="emit('mark-delete', file.id)">
-            移到回收站
-          </button>
+          <n-popconfirm
+            positive-text="归档"
+            negative-text="取消"
+            @positive-click="emit('archive', file.id)"
+          >
+            <template #trigger>
+              <button class="btn">归档</button>
+            </template>
+            把《{{ file.title }}》移到归档目录？
+          </n-popconfirm>
+          <n-popconfirm
+            positive-text="移到回收站"
+            negative-text="取消"
+            @positive-click="emit('mark-delete', file.id)"
+          >
+            <template #trigger>
+              <button class="btn btn-warn">移到回收站</button>
+            </template>
+            把《{{ file.title }}》移到回收站？随时可在回收站页取回。
+          </n-popconfirm>
         </template>
 
         <!-- will_delete: 取回 + 彻底清理 -->
         <template v-else-if="file.current_location === 'will_delete'">
           <button class="btn" @click="emit('restore', file.id)">取回</button>
-          <button
+          <n-popconfirm
             v-if="file.has_physical_file"
-            class="btn btn-danger"
-            @click="emit('permanent-delete', file.id)"
+            positive-text="永久删除"
+            negative-text="取消"
+            :positive-button-props="{ type: 'error' }"
+            @positive-click="emit('permanent-delete', file.id)"
           >
-            彻底清理
-          </button>
+            <template #trigger>
+              <button class="btn btn-danger">彻底清理</button>
+            </template>
+            彻底清理将从硬盘删除 zip 文件（DB 记录保留，元数据可搜索）。
+          </n-popconfirm>
         </template>
 
         <!-- archived: 取回 -->
