@@ -666,3 +666,91 @@ async fn list_dirty_returns_empty_when_no_orphans() {
     let arr: serde_json::Value = serde_json::from_slice(&body).unwrap();
     assert!(arr.as_array().unwrap().is_empty());
 }
+
+#[tokio::test]
+async fn images_endpoint_returns_304_when_etag_matches() {
+    use doujinshi_records::db::entities::doujinshi_file;
+    use sea_orm::{ActiveModelTrait, Set};
+    let h = build_state().await;
+    let zip_path = h.resources_dir.path().join("real.zip");
+    std::fs::write(&zip_path, build_test_zip(&[("a.png", b"\x89PNG\r\n\x1a\n")])).unwrap();
+    let hash = "c001c001c001c001c001c001c001c001c001c001c001c001c001c001c001c001";
+    let now = chrono::Utc::now();
+    let am = doujinshi_file::ActiveModel {
+        title: Set("e2e".into()),
+        filename: Set("real.zip".into()),
+        hash: Set(hash.into()),
+        ext: Set("zip".into()),
+        size_bytes: Set(2),
+        current_path: Set(zip_path.to_string_lossy().into_owned()),
+        current_location: Set("identified".into()),
+        created_at: Set(now),
+        updated_at: Set(now),
+        ..Default::default()
+    };
+    let m = am.insert(&h.state.conn).await.unwrap();
+    let id = m.id;
+
+    // First request → 200 + ETag header.
+    let resp = router(h.state.clone())
+        .oneshot(authed_request("GET", &format!("/api/doujinshi/{}/images", id)))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let etag = resp.headers().get("etag").unwrap().to_str().unwrap().to_string();
+    assert!(etag.starts_with(&format!("\"{}-", id)));
+
+    // Second request with If-None-Match → 304.
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/api/doujinshi/{}/images", id))
+        .header("authorization", format!("Bearer {}", TEST_TOKEN))
+        .header("if-none-match", etag.clone())
+        .body(Body::empty())
+        .unwrap();
+    let resp2 = router(h.state).oneshot(req).await.unwrap();
+    assert_eq!(resp2.status(), StatusCode::NOT_MODIFIED);
+}
+
+#[tokio::test]
+async fn images_endpoint_serves_cached_response_on_second_hit() {
+    use doujinshi_records::db::entities::doujinshi_file;
+    use sea_orm::{ActiveModelTrait, Set};
+    let h = build_state().await;
+    let zip_path = h.resources_dir.path().join("real.zip");
+    std::fs::write(&zip_path, build_test_zip(&[("a.png", b"\x89PNG\r\n\x1a\n")])).unwrap();
+    let hash = "c002c002c002c002c002c002c002c002c002c002c002c002c002c002c002c002";
+    let now = chrono::Utc::now();
+    let am = doujinshi_file::ActiveModel {
+        title: Set("cached".into()),
+        filename: Set("real.zip".into()),
+        hash: Set(hash.into()),
+        ext: Set("zip".into()),
+        size_bytes: Set(2),
+        current_path: Set(zip_path.to_string_lossy().into_owned()),
+        current_location: Set("identified".into()),
+        created_at: Set(now),
+        updated_at: Set(now),
+        ..Default::default()
+    };
+    let m = am.insert(&h.state.conn).await.unwrap();
+    let id = m.id;
+
+    // Two back-to-back requests: cache should serve second from disk.
+    let url = format!("/api/doujinshi/{}/images", id);
+    let resp1 = router(h.state.clone())
+        .oneshot(authed_request("GET", &url))
+        .await
+        .unwrap();
+    assert_eq!(resp1.status(), StatusCode::OK);
+
+    // Cache write is fire-and-forget on a spawned task; give it a beat.
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+    // Right after the first response, the disk cache file should exist.
+    let cache_dir = h.resources_dir.path().join("_preview_cache");
+    let entry_count = std::fs::read_dir(&cache_dir).unwrap().filter(|e| e.is_ok()).count();
+    assert!(entry_count >= 1, "expected at least one cache entry on disk");
+
+    let _resp2 = router(h.state).oneshot(authed_request("GET", &url)).await.unwrap();
+}
