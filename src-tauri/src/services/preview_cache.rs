@@ -128,15 +128,17 @@ impl PreviewCache {
         tokio::fs::write(&tmp_path, &body).await?;
         tokio::fs::rename(&tmp_path, &final_path).await?;
 
-        let mut lru = self.inner.lock().unwrap();
-        // lru::LruCache::push returns the evicted entry if over capacity.
-        // We use put() to control ordering precisely.
-        if let Some(old) = lru.put(key, CacheEntry { body, last_accessed: Instant::now() }) {
-            // old entry was displaced; nothing to do, capacity-side handled by lru crate.
-            let _ = old;
-        }
-        self.bytes_in_cache.fetch_add(size, Ordering::Relaxed);
-        let to_remove = self.evict_to_waterline_locked(&mut lru);
+        let to_remove = {
+            let mut lru = self.inner.lock().unwrap();
+            // lru::LruCache::push returns the evicted entry if over capacity.
+            // We use put() to control ordering precisely.
+            if let Some(old) = lru.put(key, CacheEntry { body, last_accessed: Instant::now() }) {
+                // old entry was displaced; nothing to do, capacity-side handled by lru crate.
+                let _ = old;
+            }
+            self.bytes_in_cache.fetch_add(size, Ordering::Relaxed);
+            self.evict_to_waterline_locked(&mut lru)
+        };
         for k in to_remove {
             let _ = tokio::fs::remove_file(self.entry_path(&k)).await;
         }

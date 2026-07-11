@@ -49,6 +49,13 @@ pub async fn build_state_with_token(token: &str) -> Harness {
             will_delete_dir: Arc::new(will_delete),
             archived_dir: Arc::new(archived),
             auth_token: Arc::new(RwLock::new(token.to_string())),
+            preview_cache: Arc::new(
+                doujinshi_records::services::preview_cache::PreviewCache::new(
+                    &resources_dir.path().join("_preview_cache"),
+                    1024 * 1024,
+                )
+                .unwrap(),
+            ),
         },
         covers_dir,
         resources_dir,
@@ -116,6 +123,13 @@ pub fn bind_real() -> (u16, std::sync::Arc<std::sync::atomic::AtomicBool>) {
                     will_delete_dir: Arc::new(std::path::PathBuf::from("will_delete")),
                     archived_dir: Arc::new(std::path::PathBuf::from("archived")),
                     auth_token: Arc::new(RwLock::new("test-token".into())),
+                    preview_cache: Arc::new(
+                        doujinshi_records::services::preview_cache::PreviewCache::new(
+                            std::path::Path::new("."),
+                            1024 * 1024,
+                        )
+                        .unwrap(),
+                    ),
                 });
                 let server = axum::serve(tokio_listener, app)
                     .with_graceful_shutdown(async move {

@@ -9,6 +9,7 @@ use axum::Json;
 use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect, PaginatorTrait};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
+use std::time::SystemTime;
 
 pub async fn health() -> Json<serde_json::Value> {
     Json(json!({ "status": "ok", "version": "0.1.0" }))
@@ -311,20 +312,26 @@ pub struct ImagesResponse {
 /// `GET /api/doujinshi/:id/images` — return every image inside the
 /// archive as base64 `data:` URLs so the SPA can render them
 /// without setting up its own file-serving endpoint.
+///
+/// V3.1: response body is LRU-cached on disk + memory, keyed by
+/// `(file_id, zip_mtime)`. ETag mirrors the key so the browser can
+/// short-circuit with `If-None-Match: 304`.
 pub async fn images(
     State(s): State<ApiState>,
     Path(id): Path<i64>,
+    headers: axum::http::HeaderMap,
 ) -> impl IntoResponse {
     use sea_orm::EntityTrait;
     let row = match doujinshi_file::Entity::find_by_id(id).one(&s.conn).await {
         Ok(Some(r)) => r,
-        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Ok(None) => return (StatusCode::NOT_FOUND, "no file").into_response(),
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     };
     let path = std::path::Path::new(&row.current_path);
     if !path.exists() {
         return (
             StatusCode::OK,
+            [(header::ETAG, format!("\"{}-missing\"", id))],
             Json(json!(ImagesResponse {
                 file_id: id,
                 images: vec![],
@@ -333,30 +340,89 @@ pub async fn images(
         )
             .into_response();
     }
-    match crate::services::archive::list_images(path) {
-        Ok(entries) => {
-            let images = entries
-                .into_iter()
-                .map(|e| {
-                    let b64 = base64::engine::general_purpose::STANDARD.encode(&e.data);
-                    ImageEntry {
-                        data_url: format!("data:image/{};base64,{}", guess_image_ext(&e.name), b64),
-                        name: e.name,
-                    }
-                })
-                .collect();
-            (
-                StatusCode::OK,
-                Json(json!(ImagesResponse {
-                    file_id: id,
-                    images,
-                    zip_missing: false,
-                })),
+
+    // mtime → ETag. Zip changed → mtime moved → cache miss; no manual invalidation needed.
+    let mtime = match path.metadata().and_then(|m| m.modified()) {
+        Ok(t) => t,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    };
+    let etag = format!(
+        "\"{}-{}\"",
+        id,
+        mtime.duration_since(SystemTime::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0)
+    );
+
+    // If-None-Match → 304
+    if let Some(if_none_match) = headers.get(header::IF_NONE_MATCH).and_then(|v| v.to_str().ok()) {
+        if if_none_match == etag {
+            return (
+                StatusCode::NOT_MODIFIED,
+                [(header::ETAG, etag.clone())],
             )
-                .into_response()
+                .into_response();
         }
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
+
+    let key: crate::services::preview_cache::CacheKey = (id, mtime);
+
+    // Try cache.
+    if let Some(body) = s.preview_cache.get(&key) {
+        return (
+            StatusCode::OK,
+            [
+                (header::CONTENT_TYPE, "application/json"),
+                (header::ETAG, etag.as_str()),
+            ],
+            body,
+        )
+            .into_response();
+    }
+
+    // Compute.
+    let entries = match crate::services::archive::list_images(path) {
+        Ok(e) => e,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    };
+    let images: Vec<ImageEntry> = entries
+        .into_iter()
+        .map(|e| {
+            let b64 = base64::engine::general_purpose::STANDARD.encode(&e.data);
+            ImageEntry {
+                data_url: format!("data:image/{};base64,{}", guess_image_ext(&e.name), b64),
+                name: e.name,
+            }
+        })
+        .collect();
+    let response = ImagesResponse { file_id: id, images, zip_missing: false };
+    let body = match serde_json::to_vec(&response) {
+        Ok(b) => b,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    };
+
+    // Store (async — fire and forget on tokio runtime).
+    let cache_for_write = s.preview_cache.clone();
+    let body_for_write = body.clone();
+    let key_for_write = key;
+    tokio::spawn(async move {
+        if let Err(e) = cache_for_write
+            .get_or_compute(key_for_write, || async { Ok::<_, anyhow::Error>(body_for_write) })
+            .await
+        {
+            eprintln!("preview_cache write failed: {:?}", e);
+        }
+    });
+
+    (
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, "application/json"),
+            (header::ETAG, etag.as_str()),
+        ],
+        body,
+    )
+        .into_response()
 }
 
 fn guess_image_ext(name: &str) -> &'static str {
