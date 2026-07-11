@@ -20,6 +20,17 @@ pub struct AppState {
 }
 
 pub async fn run(cfg: config::AppConfig, conn: DatabaseConnection) {
+    // V3 startup contract:
+    //   * `main.rs` already called `db::migrations::init_schema_versioned`,
+    //     so by the time we land here the schema is at `CURRENT_VERSION`.
+    //     V2 → V3 is a non-destructive additive upgrade: `has_physical_file`
+    //     column gets `DEFAULT 1`, and `dirty_data` is created with
+    //     `IF NOT EXISTS`. Existing rows are never touched.
+    //   * `cfg.ensure_dirs()` already ran in main.rs before the connection;
+    //     directories are also re-checked defensively below.
+
+    cfg.ensure_dirs().ok();
+
     let scanner = Arc::new(
         services::scanner::Scanner::new(
             conn.clone(),

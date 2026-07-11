@@ -12,7 +12,9 @@
 
 - 监听 `resources/doujinshi/` 的新 ZIP / RAR 压缩包
 - BLAKE3 哈希去重 + 文件名解析（标题 / 社团 / 系列 / 译者 / 版本）
-- 自动抽取封面（压缩到约 100 KB JPEG）本地保存
+- 自动抽取封面（压缩到约 100 KB WebP 格式）本地保存
+- 4 状态管理：`inbox → identified / will_delete / archived`，互相转移
+- 启动时脏数据扫描：发现位于数据目录但 DB 无对应行的孤儿文件
 - 文件名冲突检测：停在 Inbox，等用户决定跳过或比对
 - 二次确认删除（对话框 A → 对话框 B），防误触
 - 回收站视图：还原 + 永久删除
@@ -38,14 +40,15 @@ doujinshi-records/
     doujinshi/                 # inbox：把新压缩包拖到这里
     doujinshi-identified/      # 识别后自动移到这里
     doujinshi-will-delete/     # 用户标记删除的文件
-    covers/                    # 抽取出的封面（约 100 KB / 张）
+    doujinshi-archived/        # 归档文件
+    covers/                    # 抽取出的封面（约 100 KB / 张，webp）
   src/                         # Vue 前端
   src-tauri/
     src/
       commands/                # Tauri 命令（前后端桥接）
       db/                      # SeaORM 实体 + 原始 SQL 迁移
       http/                    # Axum 路由 + handlers
-      services/                # scanner / identifier / hasher / parser / archive / cover
+      services/                # scanner / identifier / hasher / parser / archive / cover / dirty_scanner / state_machine
   docs/superpowers/            # 设计 spec + 实施 plan
 ```
 
@@ -94,7 +97,10 @@ pnpm tauri build
 | GET | `/api/doujinshi/search?q=<query>` | 按标题 / 社团 / 文件名搜索 |
 | GET | `/api/doujinshi/by-hash/<hash>` | 按 BLAKE3 哈希查找 |
 | GET | `/api/doujinshi/<id>` | 单条记录 |
-| GET | `/api/covers/<file_id>` | 封面 JPEG（约 100 KB） |
+| POST | `/api/doujinshi/<id>/archive` | 移到归档目录 |
+| POST | `/api/doujinshi/<id>/restore` | 取回到已入库 |
+| GET | `/api/covers/<file_id>` | 封面 WebP（约 100 KB） |
+| GET | `/api/dirty` | 列出孤儿文件（脏数据扫描结果） |
 
 PowerShell 示例：
 
@@ -111,7 +117,23 @@ Invoke-RestMethod "http://127.0.0.1:$port/api/doujinshi/search?q=sample"
 
 ## 数据模型
 
-主表 `doujinshi_file`，辅助表 `filename_alias`、`conflict`、`scan_event`。设置存在 `app_setting`。完整 schema 见 `src-tauri/src/db/migrations.rs`。
+主表 `doujinshi_file`（含 `current_location` 4 状态字段 + `has_physical_file`），辅助表 `filename_alias`、`conflict`、`scan_event`、`dirty_data`。设置存在 `app_setting`。完整 schema 见 `src-tauri/src/db/migrations.rs`。
+
+## V3 迁移说明
+
+V3 在 V2 schema 之上做两处增量改动：
+
+1. **`doujinshi_file.has_physical_file` 新列**（默认 `1` = true）。`ALTER TABLE` 自动应用，V2 行直接获得该列。
+2. **`dirty_data` 新表**。`CREATE TABLE IF NOT EXISTS`，幂等创建，不影响 V2 数据。
+
+启动时 `db::migrations::init_schema_versioned` 会按 `schema_version` 顺序应用所有未跑的迁移，并对每个迁移做幂等检查（`pragma_table_info` 检测列存不存在）。**已存在的数据不会被删除或重建**——V2 用户升级即用。
+
+新增的 `doujinshi-archived/` 数据目录第一次启动时自动 `mkdir`（`AppConfig::ensure_dirs`）。如果 V2 业务上手动挪过文件到该目录，启动后会被识别为合法归档文件。
+
+唯一可见的行为变化：
+
+- 封面格式由 jpg 改 webp——只影响 V3 之后新入库的文件（旧 jpg 封面仍以 `image/jpeg` 通过 `/api/covers/<hash>` 提供）。
+- Library 视图多了「归档」位置筛选 + 「脏数据」独立页面。
 
 ## 开发注意
 
