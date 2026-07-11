@@ -137,13 +137,15 @@ V3 在 V2 schema 之上做两处增量改动：
 
 ## 开发注意
 
-- `pnpm.onlyBuiltDependencies` 配置了 `esbuild` 和 `vue-demi`。pnpm 报错时检查 `package.json` 此节是否还在。
 - 监听器有 2 秒防抖窗口，新文件约 2–3 秒内出现在 Library。
 - 扫描器**只**处理 `resources/doujinshi/` 顶层的 `.zip` / `.rar`，子目录被忽略。
-- 数据库在 `<resources>/doujinshi.db`（首次运行时创建）。
+- 数据库在 `<resources>/data.db`（首次运行时创建，schema 由 `init_schema_versioned` 自动迁移到 CURRENT_VERSION）。
 
 ## 设计文档
 
-- 设计 spec：`docs/superpowers/specs/2026-07-09-doujinshi-records-design.md`
-- 实施 plan：`docs/superpowers/plans/2026-07-09-doujinshi-records-v1.md`
+- 设计 spec（V1 基础）：`docs/superpowers/specs/2026-07-09-doujinshi-records-design.md`
+- V3 spec（归档 + 脏数据 + webp）：`docs/superpowers/specs/2026-07-11-v3-archive-and-dirty-data.md`
+- 实施 plan（V1）：`docs/superpowers/plans/2026-07-09-doujinshi-records-v1.md`
+- V3 plan（归档 + 脏数据 + webp）：`docs/superpowers/plans/2026-07-11-v3-archive-and-dirty-data.md`
 - V1.x 增量 plan：`docs/superpowers/plans/v1x/`
+- V2 增量 plan：`docs/superpowers/plans/v2/`
