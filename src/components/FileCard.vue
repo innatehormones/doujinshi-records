@@ -8,7 +8,10 @@ const props = defineProps<{
 
 const emit = defineEmits<{
 (e: 'viewed', id: number): void
-(e: 'delete', id: number): void
+(e: 'archive', id: number): void
+(e: 'restore', id: number): void
+(e: 'mark-delete', id: number): void
+(e: 'permanent-delete', id: number): void
 (e: 'open', id: number): void
 }>()
 
@@ -22,6 +25,15 @@ function formatSize(bytes: number): string {
   if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB"
   return (bytes / 1024 / 1024).toFixed(1) + " MB"
 }
+
+function locationLabel(): string {
+  switch (props.file.current_location) {
+    case "will_delete": return "回收"
+    case "archived": return "归档"
+    case "inbox": return "待入库"
+    default: return ""
+  }
+}
 </script>
 
 <template>
@@ -33,8 +45,10 @@ function formatSize(bytes: number): string {
       </div>
       <div class="badges">
         <span v-if="file.viewed" class="badge badge-viewed" title="已查看">V</span>
-        <span v-if="file.marked_for_delete" class="badge badge-marked" title="已标记">M</span>
-        <span v-if="file.physically_deleted" class="badge badge-gone" title="已删除">X</span>
+        <span v-if="locationLabel()" class="badge badge-loc" :title="locationLabel()">
+          {{ locationLabel().charAt(0) }}
+        </span>
+        <span v-if="!file.has_physical_file" class="badge badge-gone" title="文件丢失">!</span>
       </div>
     </div>
     <div class="body">
@@ -47,20 +61,37 @@ function formatSize(bytes: number): string {
         <button class="btn" @click="emit('viewed', file.id)">
           {{ file.viewed ? "取消已看" : "标记已看" }}
         </button>
-        <button
-          class="btn"
-          :class="file.marked_for_delete ? 'btn-active' : ''"
-          @click="emit('delete', file.id)"
-        >
-          {{ file.marked_for_delete ? "取消标记" : "标记删除" }}
-        </button>
+
+        <!-- identified: 归档 + 删除 -->
+        <template v-if="file.current_location === 'identified'">
+          <button class="btn" @click="emit('archive', file.id)">归档</button>
+          <button class="btn btn-warn" @click="emit('mark-delete', file.id)">
+            移到回收站
+          </button>
+        </template>
+
+        <!-- will_delete: 取回 + 彻底清理 -->
+        <template v-else-if="file.current_location === 'will_delete'">
+          <button class="btn" @click="emit('restore', file.id)">取回</button>
+          <button
+            v-if="file.has_physical_file"
+            class="btn btn-danger"
+            @click="emit('permanent-delete', file.id)"
+          >
+            彻底清理
+          </button>
+        </template>
+
+        <!-- archived: 取回 -->
+        <template v-else-if="file.current_location === 'archived'">
+          <button class="btn" @click="emit('restore', file.id)">取回</button>
+        </template>
       </div>
     </div>
   </article>
 </template>
 
 <style scoped>
-/* Supabase feature-card style: canvas-colored card defined only by border */
 .card {
   background: var(--surface-card);
   border: 1px solid var(--surface-border);
@@ -121,8 +152,8 @@ function formatSize(bytes: number): string {
   border: 1px solid currentColor;
 }
 .badge-viewed { color: var(--color-phosphor-green); }
-.badge-marked { color: var(--color-smoke); }
-.badge-gone   { color: var(--color-smoke); text-decoration: line-through; }
+.badge-loc    { color: var(--color-snow); }
+.badge-gone   { color: var(--color-ember-orange); }
 
 .body {
   padding: var(--spacing-16);
@@ -162,10 +193,11 @@ function formatSize(bytes: number): string {
   display: flex;
   gap: var(--spacing-8);
   margin-top: var(--spacing-8);
+  flex-wrap: wrap;
 }
-/* Ghost / pill buttons */
 .btn {
   flex: 1;
+  min-width: 60px;
   background: transparent;
   color: var(--color-snow);
   border: 1px solid var(--color-slate);
@@ -182,11 +214,8 @@ function formatSize(bytes: number): string {
   border-color: var(--color-graphite);
   background: rgba(255, 255, 255, 0.04);
 }
-.btn-active {
-  border-color: var(--color-mint-pulse);
-  color: var(--color-mint-pulse);
-}
-.btn-active:hover {
-  background: rgba(0, 197, 115, 0.08);
-}
+.btn-warn { border-color: var(--color-ember-orange); color: var(--color-ember-orange); }
+.btn-warn:hover { background: rgba(255, 140, 0, 0.08); }
+.btn-danger { border-color: var(--color-ember-red); color: var(--color-ember-red); }
+.btn-danger:hover { background: rgba(220, 38, 38, 0.08); }
 </style>

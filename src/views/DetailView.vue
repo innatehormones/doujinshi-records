@@ -98,14 +98,46 @@ async function markViewed() {
   }
 }
 
-async function startDelete() {
+async function archive() {
   if (!file.value) return
   try {
-    await store.startDelete(id.value)
-    file.value.marked_for_delete = true
-    message.success("已标记删除（移入回收站请回 Library 操作）")
+    await store.archive(id.value)
+    file.value = await api.getById(id.value)
+    message.success("已归档")
   } catch (e) {
     message.error(String(e))
+  }
+}
+
+async function restore() {
+  if (!file.value) return
+  try {
+    await store.restore(id.value)
+    file.value = await api.getById(id.value)
+    message.success("已取回到已入库")
+  } catch (e) {
+    message.error(String(e))
+  }
+}
+
+async function moveToWillDelete() {
+  if (!file.value) return
+  try {
+    await store.markForDelete(id.value)
+    file.value = await api.getById(id.value)
+    message.success("已移到回收站")
+  } catch (e) {
+    message.error(String(e))
+  }
+}
+
+function locationLabel(): string {
+  if (!file.value) return ""
+  switch (file.value.current_location) {
+    case "will_delete": return "回收站"
+    case "archived": return "归档"
+    case "inbox": return "待入库"
+    default: return "已入库"
   }
 }
 </script>
@@ -163,15 +195,29 @@ async function startDelete() {
               {{ file.viewed ? "已查看" : "标记已看" }}
             </n-button>
             <n-button
-              :disabled="file.marked_for_delete"
-              @click="startDelete"
+              v-if="file.current_location === 'identified'"
+              @click="archive"
             >
-              {{ file.marked_for_delete ? "已标记删除" : "标记删除" }}
+              归档
+            </n-button>
+            <n-button
+              v-if="file.current_location === 'identified'"
+              @click="moveToWillDelete"
+            >
+              移到回收站
+            </n-button>
+            <n-button
+              v-if="file.current_location === 'will_delete' || file.current_location === 'archived'"
+              @click="restore"
+            >
+              取回到已入库
             </n-button>
             <div class="status-row">
               <n-tag v-if="file.viewed" type="success">已看</n-tag>
-              <n-tag v-if="file.marked_for_delete" type="warning">已标记删除</n-tag>
-              <n-tag v-if="file.physically_deleted" type="error">已删除</n-tag>
+              <n-tag :type="file.current_location === 'will_delete' ? 'warning' : (file.current_location === 'archived' ? 'info' : 'default')">
+                {{ locationLabel() }}
+              </n-tag>
+              <n-tag v-if="!file.has_physical_file" type="error">文件丢失</n-tag>
             </div>
             <div class="file-meta mono">
               <div>id: {{ file.id }}</div>

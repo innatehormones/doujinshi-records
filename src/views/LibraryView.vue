@@ -1,21 +1,19 @@
 <script setup lang="ts">
-import { onMounted, ref, watch, computed } from "vue"
+import { onMounted, watch, computed } from "vue"
 import { useRouter } from "vue-router"
-import { NGrid, NGi, NSpace, NInput, NSelect, NSpin, NEmpty, NTag } from "naive-ui"
+import { NGrid, NGi, NSpace, NInput, NSelect, NSpin, NEmpty, NTag, useMessage } from "naive-ui"
 import { useLibraryStore, useSettingsStore } from "@/stores"
 import FileCard from "@/components/FileCard.vue"
-import DeleteDialogA from "@/components/DeleteDialogA.vue"
-import DeleteDialogB from "@/components/DeleteDialogB.vue"
 
 const store = useLibraryStore()
 const settings = useSettingsStore()
 const router = useRouter()
+const message = useMessage()
 
 function onCardOpen(id: number) {
   router.push({ name: 'detail', params: { id } })
 }
 
-/// Click a circle chip = filter to that circle. Click again = clear.
 function onChipClick(name: string) {
   store.setQuery(store.getQuery() === name ? "" : name)
 }
@@ -24,12 +22,14 @@ const statusOptions = [
   { label: "全部", value: "all" },
   { label: "未查看", value: "not_viewed" },
   { label: "已查看", value: "viewed" },
-  { label: "已标记", value: "marked" },
 ]
 
-const target = ref<{ id: number; title: string; size: string } | null>(null)
-const showA = ref(false)
-const showB = ref(false)
+const locationOptions = [
+  { label: "全部", value: "all" },
+  { label: "已入库", value: "identified" },
+  { label: "回收站", value: "will_delete" },
+  { label: "归档", value: "archived" },
+]
 
 const apiBase = computed(() => settings.apiBase)
 
@@ -38,52 +38,48 @@ onMounted(async () => {
   await store.load()
 })
 
-// `query` is the debounced value maintained inside the store —
-// watching it lets us fire a load exactly when the timer settles.
 watch(() => store.query, () => store.load())
 watch(() => store.status, () => store.load())
+watch(() => store.locationFilter, () => store.load())
 
-async function onCardDelete(id: number) {
-  const f = store.items.find((f) => f.id === id)
-  if (!f) return
-  if (f.marked_for_delete) {
-    await store.cancelDelete(id)
-  } else {
-    target.value = { id, title: f.title, size: formatSize(f.size_bytes) }
-    showA.value = true
+async function onCardArchive(id: number) {
+  try {
+    await store.archive(id)
+  } catch (e) {
+    message.error(String(e))
   }
 }
 
-async function confirmA() {
-  if (!target.value) return
-  await store.startDelete(target.value.id)
-  showA.value = false
-  showB.value = true
+async function onCardRestore(id: number) {
+  try {
+    await store.restore(id)
+  } catch (e) {
+    message.error(String(e))
+  }
 }
 
-async function confirmB() {
-  if (!target.value) return
-  await store.confirmMoveToWillDelete(target.value.id)
-  showB.value = false
-  target.value = null
+async function onCardMarkDelete(id: number) {
+  try {
+    await store.markForDelete(id)
+  } catch (e) {
+    message.error(String(e))
+  }
 }
 
-function cancelAB() {
-  showA.value = false
-  showB.value = false
-  target.value = null
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return bytes + " B"
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB"
-  return (bytes / 1024 / 1024).toFixed(1) + " MB"
+async function onCardPermanentDelete(id: number) {
+  try {
+    const { useRecycleStore } = await import("@/stores")
+    await useRecycleStore().permanentDelete(id)
+    await store.load()
+  } catch (e) {
+    message.error(String(e))
+  }
 }
 </script>
 
 <template>
   <div>
-    <n-space style="margin-bottom: 16px">
+    <n-space style="margin-bottom: 16px" :wrap="true">
       <n-input
         :value="store.getQuery()"
         @update:value="store.setQuery"
@@ -94,6 +90,11 @@ function formatSize(bytes: number): string {
       <n-select
         v-model:value="store.status"
         :options="statusOptions"
+        style="width: 140px"
+      />
+      <n-select
+        v-model:value="store.locationFilter"
+        :options="locationOptions"
         style="width: 140px"
       />
     </n-space>
@@ -133,28 +134,16 @@ function formatSize(bytes: number): string {
             :api-base="apiBase"
             @open="onCardOpen"
             @viewed="store.markViewed"
-            @delete="onCardDelete"
+            @archive="onCardArchive"
+            @restore="onCardRestore"
+            @mark-delete="onCardMarkDelete"
+            @permanent-delete="onCardPermanentDelete"
           />
         </n-gi>
       </n-grid>
     </n-spin>
-
-    <delete-dialog-a
-      :show="showA"
-      :title="target?.title ?? ''"
-      @cancel="cancelAB"
-      @confirm="confirmA"
-    />
-    <delete-dialog-b
-      :show="showB"
-      :title="target?.title ?? ''"
-      :size="target?.size ?? ''"
-      @cancel="cancelAB"
-      @confirm="confirmB"
-    />
   </div>
 </template>
-
 
 <style scoped>
 .page-header {
@@ -176,16 +165,5 @@ function formatSize(bytes: number): string {
   font-size: var(--text-caption);
   color: var(--color-smoke);
   letter-spacing: 0.1em;
-}
-.toolbar {
-  margin-bottom: var(--spacing-24);
-  gap: var(--spacing-8);
-}
-.empty {
-  padding: 80px 0;
-  text-align: center;
-  border: 1px dashed var(--surface-border);
-  border-radius: var(--radius-cards);
-  color: var(--color-smoke);
 }
 </style>

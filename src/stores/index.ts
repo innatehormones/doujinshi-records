@@ -2,7 +2,7 @@ import { defineStore } from "pinia"
 import { ref, computed, watch } from "vue"
 import { api } from "@/api/tauri"
 import { fetchCompare, fetchDetailImages, patchMetadata } from "@/api/http"
-import type { FileSummary, SettingsView, ConflictItem, ConflictCompare, ConflictAction, DetailImagesResponse, MetadataPatch, RarErrorEntry } from "@/types/api"
+import type { FileSummary, SettingsView, ConflictItem, ConflictCompare, ConflictAction, DetailImagesResponse, MetadataPatch, RarErrorEntry, DirtyEntry } from "@/types/api"
 
 export const useSettingsStore = defineStore("settings", () => {
   const data = ref<SettingsView | null>(null)
@@ -25,6 +25,7 @@ export const useLibraryStore = defineStore("library", () => {
   const queryInput = ref("")
   const query = ref("")
   const status = ref<"all" | "viewed" | "not_viewed" | "marked">("all")
+  const locationFilter = ref<"all" | "identified" | "will_delete" | "archived">("all")
   const loading = ref(false)
 
   let debounceTimer: number | undefined
@@ -40,7 +41,8 @@ export const useLibraryStore = defineStore("library", () => {
     try {
       items.value = await api.listLibrary(
         query.value || undefined,
-        status.value === "all" ? undefined : status.value
+        status.value === "all" ? undefined : status.value,
+        locationFilter.value === "all" ? undefined : locationFilter.value
       )
     } finally {
       loading.value = false
@@ -53,16 +55,24 @@ export const useLibraryStore = defineStore("library", () => {
     if (f) f.viewed = true
   }
 
-  async function startDelete(id: number) {
-    await api.markForDelete(id)
-    const f = items.value.find((f) => f.id === id)
-    if (f) f.marked_for_delete = true
+  async function archive(id: number) {
+    await api.archive(id)
+    await load()
   }
 
-  async function cancelDelete(id: number) {
+  async function restore(id: number) {
+    await api.restore(id)
+    await load()
+  }
+
+  async function markForDelete(id: number) {
+    await api.markForDelete(id)
+    await load()
+  }
+
+  async function unmarkForDelete(id: number) {
     await api.unmarkForDelete(id)
-    const f = items.value.find((f) => f.id === id)
-    if (f) f.marked_for_delete = false
+    await load()
   }
 
   async function confirmMoveToWillDelete(id: number) {
@@ -102,8 +112,9 @@ export const useLibraryStore = defineStore("library", () => {
   }
 
   return {
-    items, query, status, loading,
-    load, markViewed, startDelete, cancelDelete, confirmMoveToWillDelete,
+    items, query, status, locationFilter, loading,
+    load, markViewed,
+    archive, restore, markForDelete, unmarkForDelete, confirmMoveToWillDelete,
     fetchDetailImagesFor, updateMetadataFor,
     topCircles, setQuery, getQuery,
   }
@@ -129,7 +140,7 @@ export const useRecycleStore = defineStore("recycle", () => {
     await api.permanentDelete(id)
     const f = present.value.find((f) => f.id === id)
     if (f) {
-      f.physically_deleted = true
+      f.has_physical_file = false
       gone.value.push(f)
       present.value = present.value.filter((x) => x.id !== id)
     }
@@ -141,6 +152,20 @@ export const useRecycleStore = defineStore("recycle", () => {
   }
 
   return { present, gone, loading, load, permanentDelete, restore }
+})
+
+export const useDirtyStore = defineStore("dirty", () => {
+  const entries = ref<DirtyEntry[]>([])
+  const loading = ref(false)
+  async function load() {
+    loading.value = true
+    try {
+      entries.value = await api.listDirty()
+    } finally {
+      loading.value = false
+    }
+  }
+  return { entries, loading, load }
 })
 
 export const useInboxStore = defineStore("inbox", () => {

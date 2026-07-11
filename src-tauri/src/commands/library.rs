@@ -11,12 +11,17 @@ pub async fn list_library(
     state: State<'_, AppState>,
     q: Option<String>,
     status: Option<String>,
+    location: Option<String>,
     limit: Option<u64>,
     offset: Option<u64>,
 ) -> AppResult<Vec<file_summary::FileSummary>> {
     let conn = &state.conn;
-    let mut query = doujinshi_file::Entity::find()
-        .filter(doujinshi_file::Column::CurrentLocation.eq("identified"));
+    let mut query = doujinshi_file::Entity::find();
+    if let Some(loc) = location.as_deref().filter(|s| !s.is_empty() && *s != "all") {
+        query = query.filter(doujinshi_file::Column::CurrentLocation.eq(loc));
+    } else {
+        query = query.filter(doujinshi_file::Column::CurrentLocation.eq("identified"));
+    }
     if let Some(s) = status.as_deref() {
         query = match s {
             "viewed" => query.filter(doujinshi_file::Column::Viewed.eq(true)),

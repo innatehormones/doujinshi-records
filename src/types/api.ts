@@ -6,10 +6,18 @@ export interface FileSummary {
   ext: string
   size_bytes: number
   viewed: boolean
-  marked_for_delete: boolean
-  physically_deleted: boolean
-  current_location: "inbox" | "identified" | "will_delete"
+  current_location: "inbox" | "identified" | "will_delete" | "archived"
+  has_physical_file: boolean
   cover_url: string | null
+}
+
+export interface DirtyEntry {
+  id: number
+  file_path: string
+  file_size: number
+  detected_dir: "identified" | "will_delete" | "archived"
+  reason: string
+  first_seen_at: string
 }
 
 export interface SettingsView {

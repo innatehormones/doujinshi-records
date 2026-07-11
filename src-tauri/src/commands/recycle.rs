@@ -9,11 +9,14 @@ use tauri::State;
 pub async fn list_recycle(
     state: State<'_, AppState>,
 ) -> AppResult<(Vec<file_summary::FileSummary>, Vec<file_summary::FileSummary>)> {
+    // V3: present/gone 改按 has_physical_file 分组——present = 文件仍在，
+    // gone = 文件已被外部清走/已被 permanent_delete 真删。FileSummary 不
+    // 暴露 physically_deleted 字段所以这里走 has_physical_file 通道。
     let present = doujinshi_file::Entity::find()
         .filter(
             doujinshi_file::Column::CurrentLocation
                 .eq("will_delete")
-                .and(doujinshi_file::Column::PhysicallyDeleted.eq(false)),
+                .and(doujinshi_file::Column::HasPhysicalFile.eq(true)),
         )
         .all(&state.conn)
         .await?;
@@ -21,7 +24,7 @@ pub async fn list_recycle(
         .filter(
             doujinshi_file::Column::CurrentLocation
                 .eq("will_delete")
-                .and(doujinshi_file::Column::PhysicallyDeleted.eq(true)),
+                .and(doujinshi_file::Column::HasPhysicalFile.eq(false)),
         )
         .all(&state.conn)
         .await?;
@@ -45,6 +48,7 @@ pub async fn permanent_delete(state: State<'_, AppState>, id: i64) -> AppResult<
     }
     let mut am: doujinshi_file::ActiveModel = file.into();
     am.physically_deleted = Set(true);
+    am.has_physical_file = Set(false);
     am.updated_at = Set(chrono::Utc::now());
     am.update(&state.conn).await?;
     crate::services::identifier::record_event(&state.conn, id, "deleted", None)
@@ -74,6 +78,7 @@ pub async fn restore_from_recycle(state: State<'_, AppState>, id: i64) -> AppRes
     am.current_path = Set(target.to_string_lossy().into_owned());
     am.current_location = Set("identified".into());
     am.marked_for_delete = Set(false);
+    am.has_physical_file = Set(true);
     am.updated_at = Set(chrono::Utc::now());
     am.update(&state.conn).await?;
     crate::services::identifier::record_event(&state.conn, id, "restore_from_recycle", None)
