@@ -207,7 +207,10 @@ impl PreviewCache {
                 continue;
             }
             let Some(name) = p.file_name().and_then(|s| s.to_str()) else { continue };
-            let Some((id_str, mtime_str)) = name.split_once('-') else { continue };
+            // Filename shape: `<id>-<mtime>.json`. Strip extension first so
+            // split_once('-') doesn't capture `.json` into the mtime token.
+            let stem = name.strip_suffix(".json").unwrap_or(name);
+            let Some((id_str, mtime_str)) = stem.split_once('-') else { continue };
             let (Ok(id), Ok(mtime_unix)) = (id_str.parse::<i64>(), mtime_str.parse::<u64>()) else { continue };
             let Some(mtime) = SystemTime::UNIX_EPOCH.checked_add(std::time::Duration::from_secs(mtime_unix)) else { continue };
             let body = match std::fs::read(&p) {
