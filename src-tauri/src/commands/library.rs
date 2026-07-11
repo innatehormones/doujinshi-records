@@ -59,12 +59,39 @@ pub async fn unmark_viewed(state: State<'_, AppState>, id: i64) -> AppResult<()>
 
 #[tauri::command]
 pub async fn mark_for_delete(state: State<'_, AppState>, id: i64) -> AppResult<()> {
-    set_flag(&state, id, |m| { m.marked_for_delete = Set(true); }).await
+    state_machine_transition(&state, id, crate::services::state_machine::TransitionKind::MarkForDelete).await
 }
 
 #[tauri::command]
 pub async fn unmark_for_delete(state: State<'_, AppState>, id: i64) -> AppResult<()> {
-    set_flag(&state, id, |m| { m.marked_for_delete = Set(false); }).await
+    state_machine_transition(&state, id, crate::services::state_machine::TransitionKind::Restore).await
+}
+
+#[tauri::command]
+pub async fn archive(state: State<'_, AppState>, id: i64) -> AppResult<()> {
+    state_machine_transition(&state, id, crate::services::state_machine::TransitionKind::Archive).await
+}
+
+#[tauri::command]
+pub async fn restore(state: State<'_, AppState>, id: i64) -> AppResult<()> {
+    state_machine_transition(&state, id, crate::services::state_machine::TransitionKind::Restore).await
+}
+
+async fn state_machine_transition(
+    state: &AppState,
+    id: i64,
+    kind: crate::services::state_machine::TransitionKind,
+) -> AppResult<()> {
+    crate::services::state_machine::transition_with_dirs(
+        &state.conn,
+        id,
+        kind,
+        &state.config.identified_dir(),
+        &state.config.will_delete_dir(),
+        &state.config.archived_dir(),
+    )
+    .await
+    .map_err(Into::into)
 }
 
 #[tauri::command]
