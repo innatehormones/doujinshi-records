@@ -7,6 +7,7 @@ const router = createRouter({
     { path: '/inbox',     name: 'inbox',     component: () => import('./views/InboxView.vue') },
     { path: '/inbox/compare/:id', name: 'compare', component: () => import('./views/ConflictView.vue') },
     { path: '/recycle',   name: 'recycle',   component: () => import('./views/RecycleBinView.vue') },
+    { path: '/dirty',     name: 'dirty',     component: () => import('./views/DirtyView.vue') },
     { path: '/settings',  name: 'settings',  component: () => import('./views/SettingsView.vue') }
   ]
 })

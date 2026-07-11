@@ -12,6 +12,7 @@ const menuOptions = [
   { label: "我的同人志", key: "library" },
   { label: "待识别", key: "inbox" },
   { label: "回收站", key: "recycle" },
+  { label: "脏数据", key: "dirty" },
   { label: "设置", key: "settings" }
 ]
 
