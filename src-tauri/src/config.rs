@@ -4,6 +4,8 @@ use serde::Deserialize;
 #[derive(Debug, Clone, Deserialize)]
 pub struct AppConfig {
     pub resources_dir: PathBuf,
+    /// LRU preview cache 容量上限（字节）。200 MiB 默认。
+    pub preview_cache_max_bytes: u64,
 }
 
 impl AppConfig {
@@ -12,7 +14,10 @@ impl AppConfig {
             .ok_or_else(|| anyhow::anyhow!("cannot determine project root"))?
             .to_path_buf();
         let resources = project_root.join("resources");
-        Ok(Self { resources_dir: resources })
+        Ok(Self {
+            resources_dir: resources,
+            preview_cache_max_bytes: 200 * 1024 * 1024,
+        })
     }
 
     pub fn inbox_dir(&self) -> PathBuf { self.resources_dir.join("doujinshi") }
@@ -46,6 +51,7 @@ mod tests {
     fn archived_dir_lives_under_resources() {
         let cfg = AppConfig {
             resources_dir: std::path::PathBuf::from("r"),
+            preview_cache_max_bytes: 0,
         };
         assert_eq!(
             cfg.archived_dir(),
@@ -57,6 +63,7 @@ mod tests {
     fn preview_cache_dir_lives_under_resources() {
         let cfg = AppConfig {
             resources_dir: std::path::PathBuf::from("r"),
+            preview_cache_max_bytes: 0,
         };
         assert_eq!(
             cfg.preview_cache_dir(),
@@ -69,10 +76,30 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let cfg = AppConfig {
             resources_dir: dir.path().to_path_buf(),
+            preview_cache_max_bytes: 0,
         };
         cfg.ensure_dirs().unwrap();
         assert!(dir.path().join("doujinshi-archived").exists());
         assert!(dir.path().join("_preview_cache").exists());
     }
-}
 
+    #[test]
+    fn preview_cache_max_bytes_defaults_to_200mib() {
+        let cfg = AppConfig {
+            resources_dir: std::path::PathBuf::from("r"),
+            preview_cache_max_bytes: 200 * 1024 * 1024,
+        };
+        assert_eq!(cfg.preview_cache_max_bytes, 209_715_200);
+    }
+
+    #[test]
+    fn ensure_dirs_creates_preview_cache() {
+        let dir = tempfile::tempdir().unwrap();
+        let cfg = AppConfig {
+            resources_dir: dir.path().to_path_buf(),
+            preview_cache_max_bytes: 0,
+        };
+        cfg.ensure_dirs().unwrap();
+        assert!(dir.path().join("_preview_cache").exists());
+    }
+}
