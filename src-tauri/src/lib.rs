@@ -34,6 +34,29 @@ pub async fn run(cfg: config::AppConfig, conn: DatabaseConnection) {
         eprintln!("failed to start watcher: {:?}", e);
     }
 
+    // V3: spawn the dirty-data scanner in the background. Single sweep
+    // on startup; cheap enough to run synchronously without blocking
+    // UI init.
+    let dirty_conn = conn.clone();
+    let dirty_cfg = cfg.clone();
+    tauri::async_runtime::spawn(async move {
+        let report = services::dirty_scanner::scan(
+            &dirty_conn,
+            &dirty_cfg.identified_dir(),
+            &dirty_cfg.will_delete_dir(),
+            &dirty_cfg.archived_dir(),
+        )
+        .await;
+        match report {
+            Ok(r) => tracing::info!(
+                "dirty scan complete: {} orphans, {} missing files",
+                r.orphans,
+                r.db_missing_files
+            ),
+            Err(e) => tracing::warn!("dirty scan failed: {:?}", e),
+        }
+    });
+
     let covers_dir = Arc::new(cfg.covers_dir());
 
     // First-launch token bootstrap: read app_setting.auth_token; if
@@ -114,11 +137,14 @@ pub async fn run(cfg: config::AppConfig, conn: DatabaseConnection) {
             commands::library::update_metadata,
             commands::library::get_by_id,
             commands::library::force_extract,
+            commands::library::archive,
+            commands::library::restore,
             commands::recycle::list_recycle,
             commands::recycle::permanent_delete,
             commands::recycle::restore_from_recycle,
             commands::inbox::list_conflicts,
             commands::inbox::resolve_conflict,
+            commands::dirty::list_dirty,
             commands::settings::get_settings,
             commands::settings::manual_scan,
             commands::settings::regenerate_auth_token,
