@@ -121,17 +121,32 @@ impl PreviewCache {
             let _ = old;
         }
         self.bytes_in_cache.fetch_add(size, Ordering::Relaxed);
-        // Excess bytes beyond max_bytes: drain to 80% waterline by evicting LRU.
+        self.evict_to_waterline_locked(&mut lru).await;
+        Ok(())
+    }
+
+    /// Drain bytes down to 80% of `max_bytes` by popping LRU entries.
+    /// Caller MUST hold the inner mutex lock (passes &mut LruCache).
+    /// Shared by `insert` (inline, lock already held) and `gc` (locks then calls).
+    async fn evict_to_waterline_locked(&self, lru: &mut LruCache<CacheKey, CacheEntry>) {
         let waterline = self.max_bytes * 80 / 100;
         while self.bytes_in_cache.load(Ordering::Relaxed) > waterline {
-            if let Some((evicted_key, evicted)) = lru.pop_lru() {
-                let ev_size = evicted.body.len() as u64;
-                self.bytes_in_cache.fetch_sub(ev_size, Ordering::Relaxed);
-                let _ = tokio::fs::remove_file(self.entry_path(&evicted_key)).await;
-            } else {
-                break;
+            match lru.pop_lru() {
+                Some((evicted_key, evicted)) => {
+                    let ev_size = evicted.body.len() as u64;
+                    self.bytes_in_cache.fetch_sub(ev_size, Ordering::Relaxed);
+                    let _ = tokio::fs::remove_file(self.entry_path(&evicted_key)).await;
+                }
+                None => break,
             }
         }
+    }
+
+    /// Background GC entry point. Drains to 80% waterline if over budget;
+    /// no-op otherwise. Called by the lib.rs spawn loop every 30s.
+    pub async fn gc(&self) -> Result<()> {
+        let mut lru = self.inner.lock().unwrap();
+        self.evict_to_waterline_locked(&mut lru).await;
         Ok(())
     }
 }
@@ -218,5 +233,46 @@ mod tests {
         assert_eq!(cache.bytes_in_cache(), 4);
         assert!(dir.path().join("1-1700000010.json").exists());
         assert!(dir.path().join("1-1700000020.json").exists());
+    }
+
+    #[tokio::test]
+    async fn insert_over_max_bytes_evicts_oldest_until_under_waterline() {
+        let dir = tempfile::tempdir().unwrap();
+        // 100 bytes total budget; each entry 30 bytes. Insert 5 → expect ~3 entries left.
+        let cache = PreviewCache::new(dir.path(), 100).unwrap();
+        for i in 0..5i64 {
+            let key = (i, mtime_from_unix(1_700_000_100 + i as u64));
+            let _ = cache
+                .get_or_compute(key, || async {
+                    Ok::<_, anyhow::Error>(vec![b'x'; 30])
+                })
+                .await
+                .unwrap();
+        }
+        // Waterline = 100 * 80% = 80 → drop to ≤ 80 bytes kept (2 entries = 60 bytes).
+        assert!(cache.bytes_in_cache() <= 80, "should be at or under waterline; got {}", cache.bytes_in_cache());
+        // Oldest entries evicted; newest 2 retained.
+        assert!(cache.get(&(4, mtime_from_unix(1_700_000_104))).is_some());
+        assert!(cache.get(&(0, mtime_from_unix(1_700_000_100))).is_none());
+        // Disk files for evicted entries deleted.
+        assert!(!dir.path().join("0-1700000100.json").exists());
+    }
+
+    #[tokio::test]
+    async fn gc_drains_to_waterline_when_over_budget() {
+        let dir = tempfile::tempdir().unwrap();
+        // Pre-write 5 entries (30 bytes each = 150 total) directly to disk.
+        // Simulates restart where disk cache outlives the in-memory budget.
+        for i in 0..5i64 {
+            let name = format!("{}-{}.json", i, 1_700_000_300 + i as u64);
+            std::fs::write(dir.path().join(name), vec![b'x'; 30]).unwrap();
+        }
+        // max_bytes = 80 (waterline = 64). All 5 entries (150 bytes) are
+        // loaded by reload_from_disk → over budget until gc runs.
+        let cache = PreviewCache::new(dir.path(), 80).unwrap();
+        assert_eq!(cache.bytes_in_cache(), 150);
+
+        cache.gc().await.unwrap();
+        assert!(cache.bytes_in_cache() <= 64, "gc should drain to waterline; got {}", cache.bytes_in_cache());
     }
 }

@@ -468,8 +468,8 @@ git commit -m "test(cache): different mtime keys are kept separate"
         let dir = tempfile::tempdir().unwrap();
         // 100 bytes total budget; each entry 30 bytes. Insert 5 → expect ~3 entries left.
         let cache = PreviewCache::new(dir.path(), 100).unwrap();
-        for i in 0..5 {
-            let key = (i, mtime_from_unix(1_700_000_100 + i));
+        for i in 0..5i64 {
+            let key = (i, mtime_from_unix(1_700_000_100 + i as u64));
             let _ = cache
                 .get_or_compute(key, || async {
                     Ok::<_, anyhow::Error>(vec![b'x'; 30])
@@ -487,15 +487,15 @@ git commit -m "test(cache): different mtime keys are kept separate"
     }
 ```
 
-- [ ] **Step 2: 提取 evict_to_waterline + 暴露 gc()**
+- [ ] **Step 2: 提取 evict_to_waterline_locked + 暴露 gc()**
 
-把 `insert()` 里的 eviction 循环提到一个私有 `async fn evict_to_waterline(&self)` 里，再加公开 `gc()`：
+把 `insert()` 里的 eviction 循环提到一个私有 helper（接收 `&mut LruCache`，避免和 `insert()` 自身持锁时死锁），再加公开 `gc()`：
 
 ```rust
     /// Drain bytes down to 80% of `max_bytes` by popping LRU entries.
-    /// Shared by `insert` (inline) and `gc` (background).
-    async fn evict_to_waterline(&self) {
-        let mut lru = self.inner.lock().unwrap();
+    /// Caller MUST hold the inner mutex lock (passes &mut LruCache).
+    /// Shared by `insert` (inline, lock already held) and `gc` (locks then calls).
+    async fn evict_to_waterline_locked(&self, lru: &mut LruCache<CacheKey, CacheEntry>) {
         let waterline = self.max_bytes * 80 / 100;
         while self.bytes_in_cache.load(Ordering::Relaxed) > waterline {
             match lru.pop_lru() {
@@ -512,15 +512,16 @@ git commit -m "test(cache): different mtime keys are kept separate"
     /// Background GC entry point. Drains to 80% waterline if over budget;
     /// no-op otherwise. Called by the lib.rs spawn loop every 30s.
     pub async fn gc(&self) -> Result<()> {
-        self.evict_to_waterline().await;
+        let mut lru = self.inner.lock().unwrap();
+        self.evict_to_waterline_locked(&mut lru).await;
         Ok(())
     }
 ```
 
-把 `insert()` 里原来的 inline while-loop 整段删掉，替换为末尾一句：
+把 `insert()` 里原来的 inline while-loop 整段删掉，替换为末尾一句（仍在 `let mut lru = self.inner.lock().unwrap();` 作用域内）：
 
 ```rust
-        self.evict_to_waterline().await;
+        self.evict_to_waterline_locked(&mut lru).await;
         Ok(())
     }
 ```
@@ -531,18 +532,19 @@ git commit -m "test(cache): different mtime keys are kept separate"
     #[tokio::test]
     async fn gc_drains_to_waterline_when_over_budget() {
         let dir = tempfile::tempdir().unwrap();
-        let cache = PreviewCache::new(dir.path(), 100).unwrap();
-        // Fill above waterline (waterline = 80; 4 entries × 30 = 120).
-        for i in 0..4 {
-            let key = (i, mtime_from_unix(1_700_000_300 + i));
-            let _ = cache.get_or_compute(key, || async {
-                Ok::<_, anyhow::Error>(vec![b'x'; 30])
-            }).await.unwrap();
+        // Pre-write 5 entries (30 bytes each = 150 total) directly to disk.
+        // Simulates restart where disk cache outlives the in-memory budget.
+        for i in 0..5i64 {
+            let name = format!("{}-{}.json", i, 1_700_000_300 + i as u64);
+            std::fs::write(dir.path().join(name), vec![b'x'; 30]).unwrap();
         }
-        assert!(cache.bytes_in_cache() > 100, "should be over budget");
+        // max_bytes = 80 (waterline = 64). All 5 entries (150 bytes) are
+        // loaded by reload_from_disk → over budget until gc runs.
+        let cache = PreviewCache::new(dir.path(), 80).unwrap();
+        assert_eq!(cache.bytes_in_cache(), 150);
 
         cache.gc().await.unwrap();
-        assert!(cache.bytes_in_cache() <= 80, "gc should drain to waterline");
+        assert!(cache.bytes_in_cache() <= 64, "gc should drain to waterline; got {}", cache.bytes_in_cache());
     }
 ```
 
