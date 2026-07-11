@@ -21,6 +21,8 @@ pub struct ApiState {
     /// `RwLock` so the `regenerate_auth_token` Tauri command can swap
     /// the value without restarting the HTTP listener.
     pub auth_token: Arc<RwLock<String>>,
+    /// LRU preview cache（磁盘 + 内存双层）。HTTP images 端点共用。
+    pub preview_cache: Arc<crate::services::preview_cache::PreviewCache>,
 }
 
 pub struct Port(pub u16);

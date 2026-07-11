@@ -17,6 +17,8 @@ pub struct AppState {
     /// Bearer token. `RwLock` so `regenerate_auth_token` can swap the
     /// value at runtime without dropping HTTP requests.
     pub auth_token: Arc<RwLock<String>>,
+    /// LRU preview cache（磁盘 + 内存双层）。HTTP images 端点共用。
+    pub preview_cache: Arc<services::preview_cache::PreviewCache>,
 }
 
 pub async fn run(cfg: config::AppConfig, conn: DatabaseConnection) {
@@ -86,6 +88,39 @@ pub async fn run(cfg: config::AppConfig, conn: DatabaseConnection) {
     };
     let auth_token = Arc::new(RwLock::new(auth_token));
 
+    // LRU preview cache：磁盘 + 内存双层。HTTP images 端点复用。
+    // 启动时扫盘重建 LRU，损坏文件自动清理。
+    let preview_cache = match services::preview_cache::PreviewCache::new(
+        &cfg.preview_cache_dir(),
+        cfg.preview_cache_max_bytes,
+    ) {
+        Ok(c) => Arc::new(c),
+        Err(e) => {
+            eprintln!("preview_cache init failed, falling back to empty: {:?}", e);
+            Arc::new(
+                services::preview_cache::PreviewCache::new(
+                    std::path::Path::new("."),
+                    cfg.preview_cache_max_bytes,
+                )
+                .expect("inline empty cache"),
+            )
+        }
+    };
+
+    // 后台 GC：每 30s 把 cache 压回 80% waterline。HTTP handler 读路径
+    // 上也会 inline evict，这是兜底。
+    {
+        let cache_for_gc = preview_cache.clone();
+        tauri::async_runtime::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
+                if let Err(e) = cache_for_gc.gc().await {
+                    eprintln!("preview_cache gc failed: {:?}", e);
+                }
+            }
+        });
+    }
+
     let api_state = http::ApiState {
         conn: conn.clone(),
         covers_dir: covers_dir.clone(),
@@ -93,6 +128,7 @@ pub async fn run(cfg: config::AppConfig, conn: DatabaseConnection) {
         will_delete_dir: Arc::new(cfg.will_delete_dir()),
         archived_dir: Arc::new(cfg.archived_dir()),
         auth_token: auth_token.clone(),
+        preview_cache: preview_cache.clone(),
     };
 
     // Try the previously-persisted HTTP port first; fall back to a free
@@ -122,6 +158,7 @@ pub async fn run(cfg: config::AppConfig, conn: DatabaseConnection) {
         covers_dir,
         config: cfg_clone,
         auth_token: auth_token.clone(),
+        preview_cache: preview_cache.clone(),
     };
 
     tauri::Builder::default()

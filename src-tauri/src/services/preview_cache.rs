@@ -136,32 +136,45 @@ impl PreviewCache {
             let _ = old;
         }
         self.bytes_in_cache.fetch_add(size, Ordering::Relaxed);
-        self.evict_to_waterline_locked(&mut lru).await;
+        let to_remove = self.evict_to_waterline_locked(&mut lru);
+        for k in to_remove {
+            let _ = tokio::fs::remove_file(self.entry_path(&k)).await;
+        }
         Ok(())
     }
 
     /// Drain bytes down to 80% of `max_bytes` by popping LRU entries.
     /// Caller MUST hold the inner mutex lock (passes &mut LruCache).
-    /// Shared by `insert` (inline, lock already held) and `gc` (locks then calls).
-    async fn evict_to_waterline_locked(&self, lru: &mut LruCache<CacheKey, CacheEntry>) {
+    /// Returns keys whose disk files still need removal — caller is
+    /// responsible for awaiting `tokio::fs::remove_file` AFTER releasing
+    /// the lock, so we don't hold the MutexGuard across `.await`
+    /// (LruCache is internally `!Send`).
+    fn evict_to_waterline_locked(&self, lru: &mut LruCache<CacheKey, CacheEntry>) -> Vec<CacheKey> {
+        let mut to_remove = Vec::new();
         let waterline = self.max_bytes * 80 / 100;
         while self.bytes_in_cache.load(Ordering::Relaxed) > waterline {
             match lru.pop_lru() {
                 Some((evicted_key, evicted)) => {
                     let ev_size = evicted.body.len() as u64;
                     self.bytes_in_cache.fetch_sub(ev_size, Ordering::Relaxed);
-                    let _ = tokio::fs::remove_file(self.entry_path(&evicted_key)).await;
+                    to_remove.push(evicted_key);
                 }
                 None => break,
             }
         }
+        to_remove
     }
 
     /// Background GC entry point. Drains to 80% waterline if over budget;
     /// no-op otherwise. Called by the lib.rs spawn loop every 30s.
     pub async fn gc(&self) -> Result<()> {
-        let mut lru = self.inner.lock().unwrap();
-        self.evict_to_waterline_locked(&mut lru).await;
+        let to_remove = {
+            let mut lru = self.inner.lock().unwrap();
+            self.evict_to_waterline_locked(&mut lru)
+        };
+        for k in to_remove {
+            let _ = tokio::fs::remove_file(self.entry_path(&k)).await;
+        }
         Ok(())
     }
 
