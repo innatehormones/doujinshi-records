@@ -55,6 +55,9 @@ pub async fn run(cfg: config::AppConfig, conn: DatabaseConnection) {
     let api_state = http::ApiState {
         conn: conn.clone(),
         covers_dir: covers_dir.clone(),
+        identified_dir: Arc::new(cfg.identified_dir()),
+        will_delete_dir: Arc::new(cfg.will_delete_dir()),
+        archived_dir: Arc::new(cfg.archived_dir()),
         auth_token: auth_token.clone(),
     };
 

@@ -35,10 +35,19 @@ pub async fn build_state_with_token(token: &str) -> Harness {
     let conn: DatabaseConnection = db::connect(&db_path).await.expect("connect");
     migrations::init_schema_versioned(&conn).await.expect("init_schema");
     let covers = Arc::new(covers_dir.clone());
+    let identified = resources_dir.path().join("identified");
+    let will_delete = resources_dir.path().join("will_delete");
+    let archived = resources_dir.path().join("archived");
+    std::fs::create_dir_all(&identified).unwrap();
+    std::fs::create_dir_all(&will_delete).unwrap();
+    std::fs::create_dir_all(&archived).unwrap();
     Harness {
         state: ApiState {
             conn,
             covers_dir: covers,
+            identified_dir: Arc::new(identified),
+            will_delete_dir: Arc::new(will_delete),
+            archived_dir: Arc::new(archived),
             auth_token: Arc::new(RwLock::new(token.to_string())),
         },
         covers_dir,
@@ -103,6 +112,9 @@ pub fn bind_real() -> (u16, std::sync::Arc<std::sync::atomic::AtomicBool>) {
                 let app = build_test_router(ApiState {
                     conn,
                     covers_dir: Arc::new(std::path::PathBuf::from(".")),
+                    identified_dir: Arc::new(std::path::PathBuf::from("identified")),
+                    will_delete_dir: Arc::new(std::path::PathBuf::from("will_delete")),
+                    archived_dir: Arc::new(std::path::PathBuf::from("archived")),
                     auth_token: Arc::new(RwLock::new("test-token".into())),
                 });
                 let server = axum::serve(tokio_listener, app)

@@ -539,3 +539,130 @@ async fn patch_unknown_id_returns_404() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
+
+// ---------------------------------------------------------------------------
+// V3 endpoints
+// ---------------------------------------------------------------------------
+
+use doujinshi_records::db::entities::doujinshi_file;
+use sea_orm::{ActiveModelTrait, EntityTrait, Set};
+
+async fn seed_identified_row(h: &common::Harness, filename: &str, hash: &str) -> i64 {
+    let now = chrono::Utc::now();
+    let am = doujinshi_file::ActiveModel {
+        title: Set("t".into()),
+        filename: Set(filename.into()),
+        hash: Set(hash.into()),
+        ext: Set("zip".into()),
+        size_bytes: Set(0),
+        current_path: Set(h.resources_dir.path().join("identified").join(filename).to_string_lossy().into_owned()),
+        current_location: Set("identified".into()),
+        created_at: Set(now),
+        updated_at: Set(now),
+        ..Default::default()
+    };
+    am.insert(&h.state.conn).await.unwrap().id
+}
+
+#[tokio::test]
+async fn archive_moves_row_to_archived() {
+    let h = build_state().await;
+    let id = seed_identified_row(&h, "f.zip", "h").await;
+    std::fs::write(
+        h.resources_dir.path().join("identified").join("f.zip"),
+        b"data",
+    )
+    .unwrap();
+
+    let resp = router(h.state.clone())
+        .oneshot(authed_request("POST", &format!("/api/doujinshi/{}/archive", id)))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    let row = doujinshi_file::Entity::find_by_id(id)
+        .one(&h.state.conn)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.current_location, "archived");
+    assert!(h.resources_dir.path().join("archived").join("f.zip").exists());
+}
+
+#[tokio::test]
+async fn restore_moves_archived_row_back_to_identified() {
+    let h = build_state().await;
+    let id = seed_identified_row(&h, "g.zip", "hh").await;
+    std::fs::create_dir_all(h.resources_dir.path().join("archived")).unwrap();
+    std::fs::write(
+        h.resources_dir.path().join("archived").join("g.zip"),
+        b"data",
+    )
+    .unwrap();
+    let now = chrono::Utc::now();
+    let mut am: doujinshi_file::ActiveModel = doujinshi_file::Entity::find_by_id(id)
+        .one(&h.state.conn)
+        .await
+        .unwrap()
+        .unwrap()
+        .into();
+    am.current_location = Set("archived".into());
+    am.current_path = Set(
+        h.resources_dir
+            .path()
+            .join("archived")
+            .join("g.zip")
+            .to_string_lossy()
+            .into_owned(),
+    );
+    am.updated_at = Set(now);
+    am.update(&h.state.conn).await.unwrap();
+
+    let resp = router(h.state.clone())
+        .oneshot(authed_request("POST", &format!("/api/doujinshi/{}/restore", id)))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    let row = doujinshi_file::Entity::find_by_id(id)
+        .one(&h.state.conn)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.current_location, "identified");
+}
+
+#[tokio::test]
+async fn archive_rejects_illegal_transition_with_409() {
+    let h = build_state().await;
+    let id = seed_identified_row(&h, "x.zip", "hx").await;
+    let now = chrono::Utc::now();
+    let mut am: doujinshi_file::ActiveModel = doujinshi_file::Entity::find_by_id(id)
+        .one(&h.state.conn)
+        .await
+        .unwrap()
+        .unwrap()
+        .into();
+    am.current_location = Set("will_delete".into());
+    am.updated_at = Set(now);
+    am.update(&h.state.conn).await.unwrap();
+
+    let resp = router(h.state.clone())
+        .oneshot(authed_request("POST", &format!("/api/doujinshi/{}/archive", id)))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::CONFLICT);
+}
+
+#[tokio::test]
+async fn list_dirty_returns_empty_when_no_orphans() {
+    let h = build_state().await;
+    let resp = router(h.state)
+        .oneshot(authed_request("GET", "/api/dirty"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let arr: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(arr.as_array().unwrap().is_empty());
+}

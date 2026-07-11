@@ -14,6 +14,9 @@ pub mod port_allocator;
 pub struct ApiState {
     pub conn: DatabaseConnection,
     pub covers_dir: Arc<std::path::PathBuf>,
+    pub identified_dir: Arc<std::path::PathBuf>,
+    pub will_delete_dir: Arc<std::path::PathBuf>,
+    pub archived_dir: Arc<std::path::PathBuf>,
     /// Bearer token checked by `auth::require_auth`. Wrapped in
     /// `RwLock` so the `regenerate_auth_token` Tauri command can swap
     /// the value without restarting the HTTP listener.
@@ -61,6 +64,9 @@ pub fn build_router(state: ApiState, preferred_port: Option<u16>) -> Result<u16>
         // dynamic `:id` segment here doesn't compete with any
         // wildcard route above).
         .route("/api/conflicts/:id/compare", get(api::compare))
+        .route("/api/doujinshi/:id/archive", axum::routing::post(api::archive))
+        .route("/api/doujinshi/:id/restore", axum::routing::post(api::restore))
+        .route("/api/dirty", get(api::list_dirty))
         .with_state(state.clone())
         // Bearer-token auth: must sit inside `with_state` (state-aware)
         // and on the OUTSIDE of `.layer(cors)` so preflight OPTIONS can
@@ -136,6 +142,9 @@ pub fn build_test_router(state: ApiState) -> axum::Router {
         .route("/api/covers/by-hash/:hash", get(api::cover_by_hash))
         .route("/api/covers/:file_id", get(api::cover))
         .route("/api/conflicts/:id/compare", get(api::compare))
+        .route("/api/doujinshi/:id/archive", axum::routing::post(api::archive))
+        .route("/api/doujinshi/:id/restore", axum::routing::post(api::restore))
+        .route("/api/dirty", get(api::list_dirty))
         .with_state(state.clone())
         .layer(axum::middleware::from_fn_with_state(
             state,

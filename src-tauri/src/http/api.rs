@@ -385,3 +385,57 @@ pub async fn patch_metadata(
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
+
+// ---------------------------------------------------------------------------
+// V3 endpoints: archive / restore / list_dirty
+// ---------------------------------------------------------------------------
+
+pub async fn archive(State(s): State<ApiState>, Path(id): Path<i64>) -> impl IntoResponse {
+    let r = crate::services::state_machine::transition_with_dirs(
+        &s.conn,
+        id,
+        crate::services::state_machine::TransitionKind::Archive,
+        &s.identified_dir,
+        &s.will_delete_dir,
+        &s.archived_dir,
+    )
+    .await;
+    state_transition_response(r)
+}
+
+pub async fn restore(State(s): State<ApiState>, Path(id): Path<i64>) -> impl IntoResponse {
+    let r = crate::services::state_machine::transition_with_dirs(
+        &s.conn,
+        id,
+        crate::services::state_machine::TransitionKind::Restore,
+        &s.identified_dir,
+        &s.will_delete_dir,
+        &s.archived_dir,
+    )
+    .await;
+    state_transition_response(r)
+}
+
+fn state_transition_response(r: anyhow::Result<()>) -> axum::response::Response {
+    match r {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => {
+            let msg = e.to_string();
+            if msg.contains("not found") {
+                StatusCode::NOT_FOUND.into_response()
+            } else if msg.contains("illegal") {
+                (StatusCode::CONFLICT, msg).into_response()
+            } else {
+                (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
+            }
+        }
+    }
+}
+
+pub async fn list_dirty(State(s): State<ApiState>) -> impl IntoResponse {
+    use crate::db::entities::dirty_data::Entity as Dirty;
+    match Dirty::find().all(&s.conn).await {
+        Ok(rows) => Json(rows).into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
+}
