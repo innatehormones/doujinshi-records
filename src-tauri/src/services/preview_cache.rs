@@ -50,16 +50,31 @@ impl PreviewCache {
             if !p.is_file() {
                 continue;
             }
-            let Some(name) = p.file_name().and_then(|s| s.to_str()) else { continue };
+            let Some(name) = p.file_name().and_then(|s| s.to_str()) else {
+                let _ = std::fs::remove_file(&p);
+                continue;
+            };
             // Filename shape: `<id>-<mtime>.json`. Strip extension first so
             // split_once('-') doesn't capture `.json` into the mtime token.
             let stem = name.strip_suffix(".json").unwrap_or(name);
-            let Some((id_str, mtime_str)) = stem.split_once('-') else { continue };
-            let (Ok(id), Ok(mtime_unix)) = (id_str.parse::<i64>(), mtime_str.parse::<u64>()) else { continue };
-            let Some(mtime) = SystemTime::UNIX_EPOCH.checked_add(std::time::Duration::from_secs(mtime_unix)) else { continue };
+            let Some((id_str, mtime_str)) = stem.split_once('-') else {
+                let _ = std::fs::remove_file(&p);
+                continue;
+            };
+            let (Ok(id), Ok(mtime_unix)) = (id_str.parse::<i64>(), mtime_str.parse::<u64>()) else {
+                let _ = std::fs::remove_file(&p);
+                continue;
+            };
+            let Some(mtime) = SystemTime::UNIX_EPOCH.checked_add(std::time::Duration::from_secs(mtime_unix)) else {
+                let _ = std::fs::remove_file(&p);
+                continue;
+            };
             let body = match std::fs::read(&p) {
                 Ok(b) => b,
-                Err(_) => continue,
+                Err(_) => {
+                    let _ = std::fs::remove_file(&p);
+                    continue;
+                }
             };
             let size = body.len() as u64;
             lru.put((id, mtime), CacheEntry { body, last_accessed: Instant::now() });
@@ -311,5 +326,23 @@ mod tests {
         assert!(!dir.path().join("5-1700000200.json").exists());
         assert!(!dir.path().join("5-1700000201.json").exists());
         assert!(dir.path().join("6-1700000202.json").exists());
+    }
+
+    #[test]
+    fn reload_drops_malformed_files_and_keeps_good_ones() {
+        let dir = tempfile::tempdir().unwrap();
+        // 1 well-formed entry + 2 malformed
+        std::fs::write(dir.path().join("3-555.json"), b"keepme").unwrap();
+        std::fs::write(dir.path().join("garbage-not-id.json"), b"x").unwrap();
+        std::fs::write(dir.path().join("not_a_file_at_all"), b"x").unwrap();
+
+        let cache = PreviewCache::new(dir.path(), 1024 * 1024).unwrap();
+
+        // Good entry loaded (6 bytes "keepme").
+        assert_eq!(cache.bytes_in_cache(), 6);
+        // Malformed deleted.
+        assert!(!dir.path().join("garbage-not-id.json").exists());
+        assert!(!dir.path().join("not_a_file_at_all").exists());
+        assert!(dir.path().join("3-555.json").exists());
     }
 }
