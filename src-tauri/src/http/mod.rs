@@ -1,5 +1,4 @@
-﻿use std::net::TcpListener;
-use std::sync::Arc;
+﻿use std::sync::Arc;
 use anyhow::{Context, Result};
 use axum::Router;
 use sea_orm::DatabaseConnection;
@@ -9,6 +8,7 @@ pub mod api;
 pub mod auth;
 pub mod auth_token;
 pub mod placeholder;
+pub mod port_allocator;
 
 #[derive(Clone)]
 pub struct ApiState {
@@ -59,10 +59,12 @@ pub fn build_router(state: ApiState, preferred_port: Option<u16>) -> Result<u16>
         .layer(cors);
 
     let listener = match preferred_port {
-        Some(p) => TcpListener::bind(("127.0.0.1", p))
-            .or_else(|_| TcpListener::bind("127.0.0.1:0"))
-            .context("binding HTTP listener")?,
-        None => TcpListener::bind("127.0.0.1:0").context("binding HTTP listener")?,
+        Some(p) => port_allocator::bind_with_retry(p, 3)
+            .context("binding HTTP listener on preferred port")?
+            .0,
+        None => port_allocator::bind_with_retry(0, 1)
+            .context("binding HTTP listener")?
+            .0,
     };
     let port = listener.local_addr()?.port();
     listener.set_nonblocking(true)?;
