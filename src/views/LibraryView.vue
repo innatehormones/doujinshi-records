@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref, watch, computed } from "vue"
-import { NGrid, NGi, NSpace, NInput, NSelect, NSpin, NEmpty } from "naive-ui"
+import { useRouter } from "vue-router"
+import { NGrid, NGi, NSpace, NInput, NSelect, NSpin, NEmpty, NTag } from "naive-ui"
 import { useLibraryStore, useSettingsStore } from "@/stores"
 import FileCard from "@/components/FileCard.vue"
 import DeleteDialogA from "@/components/DeleteDialogA.vue"
@@ -8,6 +9,16 @@ import DeleteDialogB from "@/components/DeleteDialogB.vue"
 
 const store = useLibraryStore()
 const settings = useSettingsStore()
+const router = useRouter()
+
+function onCardOpen(id: number) {
+  router.push({ name: 'detail', params: { id } })
+}
+
+/// Click a circle chip = filter to that circle. Click again = clear.
+function onChipClick(name: string) {
+  store.setQuery(store.getQuery() === name ? "" : name)
+}
 
 const statusOptions = [
   { label: "全部", value: "all" },
@@ -27,6 +38,8 @@ onMounted(async () => {
   await store.load()
 })
 
+// `query` is the debounced value maintained inside the store —
+// watching it lets us fire a load exactly when the timer settles.
 watch(() => store.query, () => store.load())
 watch(() => store.status, () => store.load())
 
@@ -72,7 +85,8 @@ function formatSize(bytes: number): string {
   <div>
     <n-space style="margin-bottom: 16px">
       <n-input
-        v-model:value="store.query"
+        :value="store.getQuery()"
+        @update:value="store.setQuery"
         placeholder="搜索标题 / 社团 / 文件名"
         clearable
         style="width: 300px"
@@ -82,6 +96,29 @@ function formatSize(bytes: number): string {
         :options="statusOptions"
         style="width: 140px"
       />
+    </n-space>
+
+    <n-space
+      v-if="store.topCircles.length > 0"
+      style="margin-bottom: 16px"
+      :wrap="true"
+    >
+      <n-tag
+        v-for="c in store.topCircles"
+        :key="c.name"
+        :type="store.getQuery() === c.name ? 'primary' : 'default'"
+        checkable
+        @click="onChipClick(c.name)"
+      >
+        {{ c.name }} ({{ c.count }})
+      </n-tag>
+      <n-tag
+        v-if="store.getQuery()"
+        type="warning"
+        @click="store.setQuery('')"
+      >
+        清除
+      </n-tag>
     </n-space>
 
     <n-spin :show="store.loading">
@@ -94,6 +131,7 @@ function formatSize(bytes: number): string {
           <file-card
             :file="f"
             :api-base="apiBase"
+            @open="onCardOpen"
             @viewed="store.markViewed"
             @delete="onCardDelete"
           />

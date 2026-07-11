@@ -1,7 +1,8 @@
 import { defineStore } from "pinia"
-import { ref, computed } from "vue"
+import { ref, computed, watch } from "vue"
 import { api } from "@/api/tauri"
-import type { FileSummary, SettingsView, ConflictItem } from "@/types/api"
+import { fetchCompare, fetchDetailImages, patchMetadata } from "@/api/http"
+import type { FileSummary, SettingsView, ConflictItem, ConflictCompare, ConflictAction, DetailImagesResponse, MetadataPatch, RarErrorEntry } from "@/types/api"
 
 export const useSettingsStore = defineStore("settings", () => {
   const data = ref<SettingsView | null>(null)
@@ -17,9 +18,22 @@ export const useSettingsStore = defineStore("settings", () => {
 
 export const useLibraryStore = defineStore("library", () => {
   const items = ref<FileSummary[]>([])
+  // User input vs debounced version — keep `queryInput` for v-model
+  // and let `query` track what the last completed search was. UI binds
+  // to `queryInput` via setQuery/getQuery so we can debounce internally
+  // without exposing timer details to the view.
+  const queryInput = ref("")
   const query = ref("")
   const status = ref<"all" | "viewed" | "not_viewed" | "marked">("all")
   const loading = ref(false)
+
+  let debounceTimer: number | undefined
+  watch(queryInput, (v) => {
+    if (debounceTimer) clearTimeout(debounceTimer)
+    debounceTimer = window.setTimeout(() => {
+      query.value = v
+    }, 300)
+  })
 
   async function load() {
     loading.value = true
@@ -56,9 +70,42 @@ export const useLibraryStore = defineStore("library", () => {
     items.value = items.value.filter((f) => f.id !== id)
   }
 
+  async function fetchDetailImagesFor(id: number): Promise<DetailImagesResponse> {
+    return fetchDetailImages(id)
+  }
+
+  async function updateMetadataFor(id: number, patch: MetadataPatch) {
+    await patchMetadata(id, patch)
+    await load()
+  }
+
+  /// Top 10 circles (by file count) for the chip bar. Circles with
+  /// no `circle` field are skipped — LibraryView only shows real tags.
+  const topCircles = computed(() => {
+    const counts = new Map<string, number>()
+    for (const f of items.value) {
+      if (!f.circle) continue
+      counts.set(f.circle, (counts.get(f.circle) ?? 0) + 1)
+    }
+    return Array.from(counts.entries())
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 10)
+      .map(([name, count]) => ({ name, count }))
+  })
+
+  function setQuery(v: string) {
+    queryInput.value = v
+  }
+
+  function getQuery(): string {
+    return queryInput.value
+  }
+
   return {
     items, query, status, loading,
     load, markViewed, startDelete, cancelDelete, confirmMoveToWillDelete,
+    fetchDetailImagesFor, updateMetadataFor,
+    topCircles, setQuery, getQuery,
   }
 })
 
@@ -98,6 +145,7 @@ export const useRecycleStore = defineStore("recycle", () => {
 
 export const useInboxStore = defineStore("inbox", () => {
   const conflicts = ref<ConflictItem[]>([])
+  const rarErrors = ref<RarErrorEntry[]>([])
   const loading = ref(false)
 
   async function load() {
@@ -114,5 +162,47 @@ export const useInboxStore = defineStore("inbox", () => {
     conflicts.value = conflicts.value.filter((c) => c.id !== id)
   }
 
-  return { conflicts, loading, load, resolve }
+  async function loadCompare(id: number): Promise<ConflictCompare> {
+    return fetchCompare(id)
+  }
+
+  async function resolveConflict(id: number, action: ConflictAction) {
+    await api.resolveConflict(id, action)
+    conflicts.value = conflicts.value.filter((c) => c.id !== id)
+  }
+
+  /// Drop a RAR error card (user clicked "dismiss"). Keyed by
+  /// file_path because the same filename could appear multiple
+  /// times across scans.
+  function dismissRarError(filePath: string) {
+    rarErrors.value = rarErrors.value.filter((e) => e.file_path !== filePath)
+  }
+
+  /// Re-invoke the identifier on a previously-failed RAR with the
+  /// size gate skipped. Used after the medium-size confirmation
+  /// dialog. Refreshes the inbox/library so the resulting row is
+  /// visible immediately.
+  async function retryExtractLarge(filePath: string) {
+    await api.forceExtract(filePath)
+    rarErrors.value = rarErrors.value.filter((e) => e.file_path !== filePath)
+    await load()
+    // 不直接 import useLibraryStore（避免循环依赖），由 main.ts 的
+    // library-updated 监听负责刷新；这里是显式触发，避免用户视觉延迟。
+    const { useLibraryStore } = await import("@/stores")
+    await useLibraryStore().load()
+  }
+
+  /// Test/dev helper: prepend a RAR error so the UI can render
+  /// without a real RAR. Wired to the `rar-error` Tauri event by
+  /// `main.ts`.
+  function pushRarError(entry: RarErrorEntry) {
+    if (rarErrors.value.some((e) => e.file_path === entry.file_path)) return
+    rarErrors.value.push(entry)
+  }
+
+  return {
+    conflicts, rarErrors, loading,
+    load, resolve, loadCompare, resolveConflict,
+    dismissRarError, retryExtractLarge, pushRarError,
+  }
 })
