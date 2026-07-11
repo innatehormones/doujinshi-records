@@ -205,4 +205,18 @@ mod tests {
         assert_eq!(body, b"abc");
         assert_eq!(called, 0, "compute closure should NOT be re-invoked on hit");
     }
+
+    #[tokio::test]
+    async fn different_mtime_yields_separate_cache_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = PreviewCache::new(dir.path(), 1024 * 1024).unwrap();
+        let k1 = (1, mtime_from_unix(1_700_000_010));
+        let k2 = (1, mtime_from_unix(1_700_000_020));
+        let _ = cache.get_or_compute(k1, || async { Ok::<_, anyhow::Error>(b"v1".to_vec()) }).await.unwrap();
+        let _ = cache.get_or_compute(k2, || async { Ok::<_, anyhow::Error>(b"v2".to_vec()) }).await.unwrap();
+
+        assert_eq!(cache.bytes_in_cache(), 4);
+        assert!(dir.path().join("1-1700000010.json").exists());
+        assert!(dir.path().join("1-1700000020.json").exists());
+    }
 }
