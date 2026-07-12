@@ -30,21 +30,17 @@ function markFailed(name: string) {
   next.add(name)
   failedSet.value = next
 }
-// 切换文件时清空进度状态。
-watch(
-  () => images.value,
-  () => {
-    loadedSet.value = new Set()
-    failedSet.value = new Set()
-  },
-)
-
+// 切换文件时清空进度状态（watch 声明放在 images 之后，避免 TDZ）。
 const id = computed(() => Number(route.params.id))
 const file = ref<FileSummary | null>(null)
 const images = ref<DetailImage[]>([])
 const zipMissing = ref(false)
 const loading = ref(false)
 const saving = ref(false)
+watch(images, () => {
+  loadedSet.value = new Set()
+  failedSet.value = new Set()
+})
 
 // 编辑表单（编辑后保存通过 store.updateMetadataFor → PATCH）
 const editTitle = ref("")
