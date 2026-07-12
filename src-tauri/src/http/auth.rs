@@ -18,11 +18,21 @@ use crate::http::ApiState;
 /// Paths that bypass auth. Keep this list short — anything new here
 /// is a publicly-readable endpoint on a local loopback port.
 ///
-/// `/api/covers/*` is exempt so browser `<img src="...">` tags can
-/// fetch covers without having to inject an Authorization header.
-/// Cover blobs are static image bytes — no sensitive data.
+/// `/api/covers/*` and the detail-image routes are exempt so
+/// browser `<img src="...">` tags can fetch them without having to
+/// inject an Authorization header. Both serve static image bytes —
+/// no sensitive data.
 fn is_exempt(path: &str) -> bool {
-    path == "/api/health" || path.starts_with("/api/covers/")
+    path == "/api/health"
+        || path.starts_with("/api/covers/")
+        || is_detail_image(path)
+}
+
+/// Detail-image URLs are exempt:
+///   /api/doujinshi/:id/images        (JSON URL list)
+///   /api/doujinshi/:id/images/:index (image bytes)
+fn is_detail_image(path: &str) -> bool {
+    path.starts_with("/api/doujinshi/") && path.contains("/images")
 }
 
 pub async fn require_auth(

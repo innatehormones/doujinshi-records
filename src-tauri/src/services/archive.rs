@@ -46,6 +46,40 @@ pub fn pick_cover(candidates: &[ArchiveImageEntry]) -> Option<&ArchiveImageEntry
     candidates.first()
 }
 
+/// Extract a single image from a zip by its position in the
+/// image-filtered list (matches the order returned by
+/// `list_image_names`). Returns `(name, bytes)` so callers can
+/// derive a MIME type from the extension without re-parsing.
+///
+/// Skips directories and non-image entries internally so the index
+/// lines up with the public listing.
+pub fn read_image_at(path: &Path, index: usize) -> Result<(String, Vec<u8>)> {
+    if path.extension().and_then(|e| e.to_str()) != Some("zip") {
+        return Err(anyhow!("unsupported archive format (zip only for V1)"));
+    }
+    let f = std::fs::File::open(path)?;
+    let mut zip = zip::ZipArchive::new(f)?;
+    let mut seen = 0usize;
+    for i in 0..zip.len() {
+        let mut entry = zip.by_index(i)?;
+        if !entry.is_file() {
+            continue;
+        }
+        let name = entry.name().to_string();
+        let lower = name.to_lowercase();
+        if !IMG_EXTS.iter().any(|e| lower.ends_with(&format!(".{}", e))) {
+            continue;
+        }
+        if seen == index {
+            let mut data = Vec::with_capacity(entry.size() as usize);
+            std::io::copy(&mut entry, &mut data)?;
+            return Ok((name, data));
+        }
+        seen += 1;
+    }
+    Err(anyhow!("image index {} out of range", index))
+}
+
 /// Like `list_images` but only returns entry names — used by the
 /// conflict compare endpoint which never needs the file bytes.
 ///
@@ -258,6 +292,35 @@ mod tests {
     fn list_image_names_rejects_rar() {
         let p = std::path::Path::new("foo.rar");
         assert!(list_image_names(p).is_err());
+    }
+
+    #[test]
+    fn read_image_at_returns_image_by_filtered_index() {
+        let zip_bytes = build_test_zip(&[
+            ("images/01.jpg", b"jpg-bytes"),
+            ("readme.txt", b"ignored"),
+            ("images/02.png", b"png-bytes"),
+            ("images/03.webp", b"webp-bytes"),
+        ]);
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("t.zip");
+        std::fs::write(&p, zip_bytes).unwrap();
+
+        let (n0, d0) = read_image_at(&p, 0).unwrap();
+        assert_eq!(n0, "images/01.jpg");
+        assert_eq!(d0, b"jpg-bytes");
+        let (n2, d2) = read_image_at(&p, 2).unwrap();
+        assert_eq!(n2, "images/03.webp");
+        assert_eq!(d2, b"webp-bytes");
+    }
+
+    #[test]
+    fn read_image_at_out_of_range_errors() {
+        let zip_bytes = build_test_zip(&[("only.jpg", b"x")]);
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("t.zip");
+        std::fs::write(&p, zip_bytes).unwrap();
+        assert!(read_image_at(&p, 1).is_err());
     }
 }
 

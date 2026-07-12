@@ -1,7 +1,6 @@
 use crate::db::entities::doujinshi_file;
 use crate::http::ApiState;
 use crate::models::file_summary;
-use base64::Engine;
 use axum::extract::{Path, Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::IntoResponse;
@@ -116,7 +115,7 @@ pub async fn cover(
     ];
     for abs in &candidates {
         if let Ok(bytes) = tokio::fs::read(abs).await {
-            return ([(header::CONTENT_TYPE, "image/jpeg")], bytes).into_response();
+            return ([(header::CONTENT_TYPE, cover_mime(&bytes))], bytes).into_response();
         }
     }
     // Row exists but the cover file is missing on disk — serve a
@@ -295,8 +294,9 @@ fn cover_url_for(hash: &str) -> Option<String> {
 #[derive(Serialize)]
 pub struct ImageEntry {
     pub name: String,
-    /// `data:image/{ext};base64,...` — directly usable in `<img src>`.
-    pub data_url: String,
+    /// Path-only image URL — frontend prepends `useSettingsStore.apiBase`.
+    /// Individual bytes served by `GET /api/doujinshi/:id/images/:index`.
+    pub url: String,
 }
 
 #[derive(Serialize)]
@@ -309,13 +309,14 @@ pub struct ImagesResponse {
     pub zip_missing: bool,
 }
 
-/// `GET /api/doujinshi/:id/images` — return every image inside the
-/// archive as base64 `data:` URLs so the SPA can render them
-/// without setting up its own file-serving endpoint.
+/// `GET /api/doujinshi/:id/images` — return one URL per image inside
+/// the archive. Bytes are served by the sibling
+/// `/api/doujinshi/:id/images/:index` route so the SPA's `<img>`
+/// tags can stream them directly instead of pulling the whole
+/// archive in one base64 blob.
 ///
-/// V3.1: response body is LRU-cached on disk + memory, keyed by
-/// `(file_id, zip_mtime)`. ETag mirrors the key so the browser can
-/// short-circuit with `If-None-Match: 304`.
+/// 响应体本身很小（几 KB），不做服务端缓存；扫 zip central directory
+/// 拿文件名列表约 5ms。ETag 走 zip mtime 让浏览器可以 304 短路。
 pub async fn images(
     State(s): State<ApiState>,
     Path(id): Path<i64>,
@@ -365,74 +366,135 @@ pub async fn images(
         }
     }
 
-    let key: crate::services::preview_cache::CacheKey = (id, mtime);
-
-    // Try cache.
-    if let Some(body) = s.preview_cache.get(&key) {
-        return (
-            StatusCode::OK,
-            [
-                (header::CONTENT_TYPE, "application/json"),
-                (header::ETAG, etag.as_str()),
-            ],
-            body,
-        )
-            .into_response();
-    }
-
-    // Compute.
-    let entries = match crate::services::archive::list_images(path) {
-        Ok(e) => e,
+    // Compute: list names only, build URL list. Bytes are served by
+    // /api/doujinshi/:id/images/:index so the SPA can stream them
+    // instead of pulling the whole archive in one base64 blob.
+    let names = match crate::services::archive::list_image_names(path) {
+        Ok(n) => n,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     };
-    let images: Vec<ImageEntry> = entries
+    let images: Vec<ImageEntry> = names
         .into_iter()
-        .map(|e| {
-            let b64 = base64::engine::general_purpose::STANDARD.encode(&e.data);
-            ImageEntry {
-                data_url: format!("data:image/{};base64,{}", guess_image_ext(&e.name), b64),
-                name: e.name,
-            }
+        .enumerate()
+        .map(|(idx, name)| ImageEntry {
+            url: format!("/api/doujinshi/{}/images/{}", id, idx),
+            name,
         })
         .collect();
     let response = ImagesResponse { file_id: id, images, zip_missing: false };
-    let body = match serde_json::to_vec(&response) {
-        Ok(b) => b,
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-    };
-
-    // Store (async — fire and forget on tokio runtime).
-    let cache_for_write = s.preview_cache.clone();
-    let body_for_write = body.clone();
-    let key_for_write = key;
-    tokio::spawn(async move {
-        if let Err(e) = cache_for_write
-            .get_or_compute(key_for_write, || async { Ok::<_, anyhow::Error>(body_for_write) })
-            .await
-        {
-            eprintln!("preview_cache write failed: {:?}", e);
-        }
-    });
 
     (
         StatusCode::OK,
-        [
-            (header::CONTENT_TYPE, "application/json"),
-            (header::ETAG, etag.as_str()),
-        ],
-        body,
+        [(header::ETAG, etag.as_str())],
+        Json(response),
     )
         .into_response()
 }
 
-fn guess_image_ext(name: &str) -> &'static str {
-    let lower = name.to_lowercase();
-    if lower.ends_with(".png") {
-        "png"
-    } else if lower.ends_with(".webp") {
-        "webp"
+/// `GET /api/doujinshi/:id/images/:index` — 解图 → 转 webp q=70 ≤1600px →
+/// 落 LRU（命中直接吐）。Auth-exempt（`<img>` 直读）。
+pub async fn image_at(
+    State(s): State<ApiState>,
+    Path((id, index)): Path<(i64, usize)>,
+) -> impl IntoResponse {
+    let key: crate::services::preview_cache::CacheKey = (id, index);
+    let etag = format!("\"{}-{}\"", id, index);
+
+    if let Some(bytes) = s.preview_cache.get(&key) {
+        return webp_response(bytes, &etag);
+    }
+
+    use sea_orm::EntityTrait;
+    let row = match doujinshi_file::Entity::find_by_id(id).one(&s.conn).await {
+        Ok(Some(r)) => r,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    };
+    let path = std::path::Path::new(&row.current_path);
+    if !path.exists() {
+        return StatusCode::NOT_FOUND.into_response();
+    }
+
+    // 解图 + 转码都在 blocking 线程里（zip 读同步 + image decode CPU 密集）。
+    let path_owned = path.to_path_buf();
+    let transcode = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<u8>> {
+        let (_, raw) = crate::services::archive::read_image_at(&path_owned, index)?;
+        crate::services::cover_format::transcode_to_preview_webp(&raw)
+    })
+    .await;
+
+    let bytes = match transcode {
+        Ok(Ok(b)) => b,
+        Ok(Err(_)) => return StatusCode::NOT_FOUND.into_response(),
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    };
+
+    // fire-and-forget 落 LRU
+    let cache = s.preview_cache.clone();
+    let body = bytes.clone();
+    tokio::spawn(async move {
+        let _ = cache
+            .get_or_compute(key, || async { Ok::<_, anyhow::Error>(body) })
+            .await;
+    });
+
+    webp_response(bytes, &etag)
+}
+
+fn webp_response(bytes: Vec<u8>, etag: &str) -> axum::response::Response {
+    (
+        StatusCode::OK,
+        [(header::CONTENT_TYPE, "image/webp"), (header::ETAG, etag)],
+        bytes,
+    )
+        .into_response()
+}
+
+/// 封面文件实际是 webp（V3+）或 jpg（V1/V2 旧数据）。按 magic bytes 探测
+/// mime——磁盘文件扩展名不可靠（V3 写 webp bytes 但路径硬编码 .jpg）。
+fn cover_mime(bytes: &[u8]) -> &'static str {
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        "image/webp"
+    } else if bytes.len() >= 8 && bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        "image/png"
     } else {
-        "jpeg"
+        "image/jpeg"
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn cover_mime_detects_webp_magic() {
+        // 12 字节头：RIFF + size + WEBP
+        let mut bytes = vec![0u8; 12];
+        bytes[0..4].copy_from_slice(b"RIFF");
+        bytes[8..12].copy_from_slice(b"WEBP");
+        assert_eq!(cover_mime(&bytes), "image/webp");
+    }
+
+    #[test]
+    fn cover_mime_detects_png_magic() {
+        let mut bytes = vec![0u8; 32];
+        bytes[0..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+        assert_eq!(cover_mime(&bytes), "image/png");
+    }
+
+    #[test]
+    fn cover_mime_falls_back_to_jpeg_for_unknown() {
+        let bytes = b"\xff\xd8\xff\xe0xxxx"; // JPEG SOI + APP0 magic
+        assert_eq!(cover_mime(bytes), "image/jpeg");
+    }
+
+    #[test]
+    fn cover_mime_handles_truncated_input() {
+        // < 12 字节但 ≥ 8：能识别 png；< 8：fallback。
+        let mut png_short = vec![0u8; 8];
+        png_short[0..8].copy_from_slice(b"\x89PNG\r\n\x1a\n");
+        assert_eq!(cover_mime(&png_short), "image/png");
+        assert_eq!(cover_mime(b"\x89"), "image/jpeg");
     }
 }
 
@@ -466,6 +528,9 @@ pub async fn archive(State(s): State<ApiState>, Path(id): Path<i64>) -> impl Int
         &s.archived_dir,
     )
     .await;
+    if r.is_ok() {
+        s.preview_cache.invalidate(id);
+    }
     state_transition_response(r)
 }
 
@@ -479,6 +544,9 @@ pub async fn restore(State(s): State<ApiState>, Path(id): Path<i64>) -> impl Int
         &s.archived_dir,
     )
     .await;
+    if r.is_ok() {
+        s.preview_cache.invalidate(id);
+    }
     state_transition_response(r)
 }
 

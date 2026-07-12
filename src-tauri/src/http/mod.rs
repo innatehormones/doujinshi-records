@@ -57,6 +57,7 @@ pub fn build_router(state: ApiState, preferred_port: Option<u16>) -> Result<u16>
             get(api::by_id).patch(api::patch_metadata),
         )
         .route("/api/doujinshi/:id/images", get(api::images))
+        .route("/api/doujinshi/:id/images/:index", get(api::image_at))
         .route("/api/doujinshi/:id/viewed", axum::routing::post(api::mark_viewed_http))
         // V2: same as /api/covers/:file_id but hash-keyed. Must
         // come before the :file_id wildcard.
@@ -100,7 +101,8 @@ pub fn build_router(state: ApiState, preferred_port: Option<u16>) -> Result<u16>
     std::thread::Builder::new()
         .name("doujinshi-http-api".into())
         .spawn(move || {
-            let rt = match tokio::runtime::Builder::new_current_thread()
+            let rt = match tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(4)
                 .enable_all()
                 .build()
             {
@@ -140,6 +142,7 @@ pub fn build_test_router(state: ApiState) -> axum::Router {
             get(api::by_id).patch(api::patch_metadata),
         )
         .route("/api/doujinshi/:id/images", get(api::images))
+        .route("/api/doujinshi/:id/images/:index", get(api::image_at))
         .route("/api/doujinshi/:id/viewed", axum::routing::post(api::mark_viewed_http))
         .route("/api/covers/by-hash/:hash", get(api::cover_by_hash))
         .route("/api/covers/:file_id", get(api::cover))

@@ -95,8 +95,10 @@ async fn state_machine_transition(
         &state.config.will_delete_dir(),
         &state.config.archived_dir(),
     )
-    .await
-    .map_err(Into::into)
+    .await?;
+    // zip 移动/删除后清掉对应 id 的预览缓存（key 是 (id, idx)，状态变了内容不再有意义）。
+    state.preview_cache.invalidate(id);
+    Ok(())
 }
 
 #[tauri::command]

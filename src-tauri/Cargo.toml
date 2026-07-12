@@ -36,6 +36,7 @@ sysinfo = "0.32"
 walkdir = "2"
 tempfile = "3"
 lru = "0.12"
+webp = "0.3"
 
 [dev-dependencies]
 tempfile = "3"

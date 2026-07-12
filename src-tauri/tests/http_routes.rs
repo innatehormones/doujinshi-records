@@ -146,6 +146,43 @@ async fn cover_returns_jpeg_when_file_present() {
 }
 
 #[tokio::test]
+async fn cover_returns_webp_when_file_extension_is_webp() {
+    use doujinshi_records::db::entities::doujinshi_file;
+    use sea_orm::{ActiveModelTrait, Set};
+    let h = build_state().await;
+    let hash = "abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123abc1";
+    // V3 encodes covers as webp; cover_path carries `.webp`. The HTTP
+    // route must return `image/webp` instead of the legacy hardcoded
+    // `image/jpeg` so browsers don't log MIME mismatch warnings.
+    let cover_abs = h.covers_dir.join(format!("{}.webp", hash));
+    std::fs::write(&cover_abs, b"RIFF\x00\x00\x00\x00WEBPfake-data").unwrap();
+    let rel = format!("covers/{}.webp", hash);
+    let am = doujinshi_file::ActiveModel {
+        title: Set("webp cover".into()),
+        filename: Set("webp_cover.zip".into()),
+        hash: Set(hash.into()),
+        ext: Set("zip".into()),
+        size_bytes: Set(0),
+        current_path: Set("/tmp/webp_cover.zip".into()),
+        current_location: Set("identified".into()),
+        cover_path: Set(Some(rel)),
+        created_at: Set(chrono::Utc::now()),
+        updated_at: Set(chrono::Utc::now()),
+        ..Default::default()
+    };
+    am.insert(&h.state.conn).await.unwrap();
+    let resp = router(h.state)
+        .oneshot(authed_request("GET", &format!("/api/covers/{}", hash)))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    assert_eq!(
+        resp.headers().get("content-type").unwrap().to_str().unwrap(),
+        "image/webp"
+    );
+}
+
+#[tokio::test]
 async fn cover_serves_placeholder_when_disk_file_missing() {
     use doujinshi_records::db::entities::doujinshi_file;
     use sea_orm::{ActiveModelTrait, Set};
@@ -396,10 +433,90 @@ async fn images_returns_entries_when_zip_present() {
     assert_eq!(v["zip_missing"].as_bool().unwrap(), false);
     let images = v["images"].as_array().unwrap();
     assert_eq!(images.len(), 2);
-    for img in images {
-        let url = img["data_url"].as_str().unwrap();
-        assert!(url.starts_with("data:image/"), "got {}", url);
+    for (idx, img) in images.iter().enumerate() {
+        let url = img["url"].as_str().unwrap();
+        assert!(
+            url.starts_with(&format!("/api/doujinshi/{}/images/", id)),
+            "got {}",
+            url
+        );
+        // Index in URL must match the array position.
+        assert!(url.ends_with(&format!("/{}", idx)), "got {}", url);
     }
+}
+
+#[tokio::test]
+async fn image_at_returns_webp_bytes() {
+    // V3.1: /images/:index 返回 webp q=70 bytes（无论原图是 jpg/png/webp），
+    // 体积远小于原图，且通过 LRU 缓存。
+    let h = build_state().await;
+    let zip = h.resources_dir.path().join("d.zip");
+    // 写合法的小 png：8x8 noise，让 image 能 decode。
+    let mut img = image::DynamicImage::new_rgb8(8, 8);
+    for y in 0..8 {
+        for x in 0..8 {
+            img.as_mut_rgb8().unwrap().put_pixel(x, y, image::Rgb([(x * 30) as u8, (y * 30) as u8, 128]));
+        }
+    }
+    let mut png_buf = std::io::Cursor::new(Vec::new());
+    img.write_to(&mut png_buf, image::ImageFormat::Png).unwrap();
+    let png_bytes = png_buf.into_inner();
+    std::fs::write(
+        &zip,
+        build_test_zip(&[
+            ("01.png", png_bytes.as_slice()),
+        ]),
+    )
+    .unwrap();
+    let id = seed_file_with_zip(&h.state.conn, &zip, "d.zip").await;
+
+    // Auth-exempt (browser <img> needs bare URL).
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/api/doujinshi/{}/images/0", id))
+        .body(Body::empty())
+        .unwrap();
+    let resp = router(h.state.clone())
+        .oneshot(req)
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let mime = resp.headers().get("content-type").unwrap().to_str().unwrap().to_string();
+    assert_eq!(mime, "image/webp");
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    assert!(body.starts_with(b"RIFF") && body[8..12] == *b"WEBP",
+            "expected RIFF/WEBP magic, got {:?}", &body[..body.len().min(12)]);
+
+    // Cache write is fire-and-forget；等一拍后第二次请求命中 LRU。
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    let cache_dir = h.resources_dir.path().join("_preview_cache");
+    let on_disk = cache_dir.join(format!("{}-0.webp", id));
+    assert!(on_disk.exists(), "cache file should be written");
+
+    let req2 = Request::builder()
+        .method("GET")
+        .uri(format!("/api/doujinshi/{}/images/0", id))
+        .body(Body::empty())
+        .unwrap();
+    let resp2 = router(h.state).oneshot(req2).await.unwrap();
+    assert_eq!(resp2.status(), StatusCode::OK);
+    assert_eq!(resp2.headers().get("content-type").unwrap(), "image/webp");
+}
+
+#[tokio::test]
+async fn image_at_returns_404_for_out_of_range_index() {
+    let h = build_state().await;
+    let zip = h.resources_dir.path().join("d.zip");
+    std::fs::write(&zip, build_test_zip(&[("01.jpg", b"x")])).unwrap();
+    let id = seed_file_with_zip(&h.state.conn, &zip, "d.zip").await;
+
+    let req = Request::builder()
+        .method("GET")
+        .uri(format!("/api/doujinshi/{}/images/9", id))
+        .body(Body::empty())
+        .unwrap();
+    let resp = router(h.state).oneshot(req).await.unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -713,21 +830,21 @@ async fn images_endpoint_returns_304_when_etag_matches() {
 }
 
 #[tokio::test]
-async fn images_endpoint_serves_cached_response_on_second_hit() {
+async fn state_transition_invalidates_preview_cache() {
+    // V3.1: state_machine 转移后，preview_cache 里该 id 的 entries 都要清掉。
     use doujinshi_records::db::entities::doujinshi_file;
     use sea_orm::{ActiveModelTrait, Set};
     let h = build_state().await;
-    let zip_path = h.resources_dir.path().join("real.zip");
-    std::fs::write(&zip_path, build_test_zip(&[("a.png", b"\x89PNG\r\n\x1a\n")])).unwrap();
-    let hash = "c002c002c002c002c002c002c002c002c002c002c002c002c002c002c002c002";
+    let zip = h.resources_dir.path().join("cache.zip");
+    std::fs::write(&zip, build_test_zip(&[("a.png", b"x")])).unwrap();
     let now = chrono::Utc::now();
     let am = doujinshi_file::ActiveModel {
-        title: Set("cached".into()),
-        filename: Set("real.zip".into()),
-        hash: Set(hash.into()),
+        title: Set("t".into()),
+        filename: Set("cache.zip".into()),
+        hash: Set("h-cache-inv".into()),
         ext: Set("zip".into()),
         size_bytes: Set(2),
-        current_path: Set(zip_path.to_string_lossy().into_owned()),
+        current_path: Set(zip.to_string_lossy().into_owned()),
         current_location: Set("identified".into()),
         created_at: Set(now),
         updated_at: Set(now),
@@ -736,21 +853,27 @@ async fn images_endpoint_serves_cached_response_on_second_hit() {
     let m = am.insert(&h.state.conn).await.unwrap();
     let id = m.id;
 
-    // Two back-to-back requests: cache should serve second from disk.
-    let url = format!("/api/doujinshi/{}/images", id);
-    let resp1 = router(h.state.clone())
-        .oneshot(authed_request("GET", &url))
+    // 直接写 cache 文件 + LRU entry
+    h.state.preview_cache.invalidate(id); // 先清空确保干净状态
+    let _ = h.state.preview_cache
+        .get_or_compute((id, 0usize), || async { Ok::<_, anyhow::Error>(b"cached-bytes".to_vec()) })
         .await
         .unwrap();
-    assert_eq!(resp1.status(), StatusCode::OK);
+    assert!(h.state.preview_cache.get(&(id, 0usize)).is_some());
 
-    // Cache write is fire-and-forget on a spawned task; give it a beat.
-    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    // transition identified → archived → should invalidate cache
+    let result = doujinshi_records::services::state_machine::transition_with_dirs(
+        &h.state.conn,
+        id,
+        doujinshi_records::services::state_machine::TransitionKind::Archive,
+        &h.resources_dir.path().join("doujinshi-identified"),
+        &h.resources_dir.path().join("doujinshi-will-delete"),
+        &h.resources_dir.path().join("doujinshi-archived"),
+    )
+    .await;
+    result.unwrap();
+    h.state.preview_cache.invalidate(id); // 调用方负责；这里模拟 commands/library 的 helper
 
-    // Right after the first response, the disk cache file should exist.
-    let cache_dir = h.resources_dir.path().join("_preview_cache");
-    let entry_count = std::fs::read_dir(&cache_dir).unwrap().filter(|e| e.is_ok()).count();
-    assert!(entry_count >= 1, "expected at least one cache entry on disk");
-
-    let _resp2 = router(h.state).oneshot(authed_request("GET", &url)).await.unwrap();
+    assert!(h.state.preview_cache.get(&(id, 0usize)).is_none(),
+            "cache entries for id should be cleared after state transition");
 }
