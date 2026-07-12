@@ -1,14 +1,14 @@
 //! HTTP bearer-token middleware.
 //!
-//! Every route other than `/api/health` requires
-//! `Authorization: Bearer <token>`. The expected token is the
-//! per-install secret persisted in `app_setting.auth_token` and
-//! mirrored into `ApiState.auth_token` at startup. Wrong / missing
-//! header → 401.
+//! Health, cover GETs, and detail-image GETs bypass auth for browser
+//! `<img src="...">` usage; other routes require `Authorization: Bearer <token>`.
+//! The expected token is the per-install secret persisted in
+//! `app_setting.auth_token` and mirrored into `ApiState.auth_token` at startup.
+//! Wrong / missing header → 401.
 
 use axum::{
     extract::{Request, State},
-    http::{header, StatusCode},
+    http::{header, Method, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
 };
@@ -22,10 +22,10 @@ use crate::http::ApiState;
 /// browser `<img src="...">` tags can fetch them without having to
 /// inject an Authorization header. Both serve static image bytes —
 /// no sensitive data.
-fn is_exempt(path: &str) -> bool {
+fn is_exempt(method: &Method, path: &str) -> bool {
     path == "/api/health"
-        || path.starts_with("/api/covers/")
-        || is_detail_image(path)
+        || (method == Method::GET && path.starts_with("/api/covers/"))
+        || (method == Method::GET && is_detail_image(path))
 }
 
 /// Detail-image URLs are exempt:
@@ -35,13 +35,10 @@ fn is_detail_image(path: &str) -> bool {
     path.starts_with("/api/doujinshi/") && path.contains("/images")
 }
 
-pub async fn require_auth(
-    State(state): State<ApiState>,
-    req: Request,
-    next: Next,
-) -> Response {
+pub async fn require_auth(State(state): State<ApiState>, req: Request, next: Next) -> Response {
+    let method = req.method().clone();
     let path = req.uri().path().to_string();
-    if is_exempt(&path) {
+    if is_exempt(&method, &path) {
         return next.run(req).await;
     }
     let header_val = req
@@ -53,7 +50,9 @@ pub async fn require_auth(
     // error and yields 500 rather than silently granting access.
     let token_snapshot = match state.auth_token.read() {
         Ok(t) => t.clone(),
-        Err(_) => return (StatusCode::INTERNAL_SERVER_ERROR, "token lock poisoned").into_response(),
+        Err(_) => {
+            return (StatusCode::INTERNAL_SERVER_ERROR, "token lock poisoned").into_response()
+        }
     };
     let expected = format!("Bearer {}", token_snapshot);
     match header_val {

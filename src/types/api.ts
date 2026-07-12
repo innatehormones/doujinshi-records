@@ -78,6 +78,8 @@ export interface DetailImage {
   /// Path-only image URL — frontend prepends `useSettingsStore.apiBase`.
   /// Bytes served by `GET /api/doujinshi/:id/images/:index`.
   url: string
+  /// True when the backend already has a webp thumbnail for this image.
+  thumb_cached: boolean
 }
 
 export interface DetailImagesResponse {

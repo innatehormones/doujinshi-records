@@ -1,7 +1,7 @@
-﻿use std::sync::{Arc, RwLock};
 use anyhow::{Context, Result};
 use axum::Router;
 use sea_orm::DatabaseConnection;
+use std::sync::{Arc, RwLock};
 use tower_http::cors::{Any, CorsLayer};
 
 pub mod api;
@@ -26,7 +26,12 @@ pub struct ApiState {
 }
 
 pub struct Port(pub u16);
-impl std::ops::Deref for Port { type Target = u16; fn deref(&self) -> &u16 { &self.0 } }
+impl std::ops::Deref for Port {
+    type Target = u16;
+    fn deref(&self) -> &u16 {
+        &self.0
+    }
+}
 
 /// Build the axum router and bind it on a free port.
 ///
@@ -58,7 +63,14 @@ pub fn build_router(state: ApiState, preferred_port: Option<u16>) -> Result<u16>
         )
         .route("/api/doujinshi/:id/images", get(api::images))
         .route("/api/doujinshi/:id/images/:index", get(api::image_at))
-        .route("/api/doujinshi/:id/viewed", axum::routing::post(api::mark_viewed_http))
+        .route(
+            "/api/doujinshi/:id/images/:index/thumb",
+            axum::routing::put(api::put_image_thumb),
+        )
+        .route(
+            "/api/doujinshi/:id/viewed",
+            axum::routing::post(api::mark_viewed_http),
+        )
         // V2: same as /api/covers/:file_id but hash-keyed. Must
         // come before the :file_id wildcard.
         .route("/api/covers/by-hash/:hash", get(api::cover_by_hash))
@@ -67,8 +79,14 @@ pub fn build_router(state: ApiState, preferred_port: Option<u16>) -> Result<u16>
         // dynamic `:id` segment here doesn't compete with any
         // wildcard route above).
         .route("/api/conflicts/:id/compare", get(api::compare))
-        .route("/api/doujinshi/:id/archive", axum::routing::post(api::archive))
-        .route("/api/doujinshi/:id/restore", axum::routing::post(api::restore))
+        .route(
+            "/api/doujinshi/:id/archive",
+            axum::routing::post(api::archive),
+        )
+        .route(
+            "/api/doujinshi/:id/restore",
+            axum::routing::post(api::restore),
+        )
         .route("/api/dirty", get(api::list_dirty))
         .with_state(state.clone())
         // Bearer-token auth: must sit inside `with_state` (state-aware)
@@ -81,12 +99,16 @@ pub fn build_router(state: ApiState, preferred_port: Option<u16>) -> Result<u16>
         .layer(cors);
 
     let listener = match preferred_port {
-        Some(p) => port_allocator::bind_with_retry(p, 3)
-            .context("binding HTTP listener on preferred port")?
-            .0,
-        None => port_allocator::bind_with_retry(0, 1)
-            .context("binding HTTP listener")?
-            .0,
+        Some(p) => {
+            port_allocator::bind_with_retry(p, 3)
+                .context("binding HTTP listener on preferred port")?
+                .0
+        }
+        None => {
+            port_allocator::bind_with_retry(0, 1)
+                .context("binding HTTP listener")?
+                .0
+        }
     };
     let port = listener.local_addr()?.port();
     listener.set_nonblocking(true)?;
@@ -143,12 +165,25 @@ pub fn build_test_router(state: ApiState) -> axum::Router {
         )
         .route("/api/doujinshi/:id/images", get(api::images))
         .route("/api/doujinshi/:id/images/:index", get(api::image_at))
-        .route("/api/doujinshi/:id/viewed", axum::routing::post(api::mark_viewed_http))
+        .route(
+            "/api/doujinshi/:id/images/:index/thumb",
+            axum::routing::put(api::put_image_thumb),
+        )
+        .route(
+            "/api/doujinshi/:id/viewed",
+            axum::routing::post(api::mark_viewed_http),
+        )
         .route("/api/covers/by-hash/:hash", get(api::cover_by_hash))
         .route("/api/covers/:file_id", get(api::cover))
         .route("/api/conflicts/:id/compare", get(api::compare))
-        .route("/api/doujinshi/:id/archive", axum::routing::post(api::archive))
-        .route("/api/doujinshi/:id/restore", axum::routing::post(api::restore))
+        .route(
+            "/api/doujinshi/:id/archive",
+            axum::routing::post(api::archive),
+        )
+        .route(
+            "/api/doujinshi/:id/restore",
+            axum::routing::post(api::restore),
+        )
         .route("/api/dirty", get(api::list_dirty))
         .with_state(state.clone())
         .layer(axum::middleware::from_fn_with_state(

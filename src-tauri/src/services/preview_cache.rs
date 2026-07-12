@@ -76,16 +76,26 @@ impl PreviewCache {
                 }
             };
             let size = body.len() as u64;
-            lru.put((id, idx), CacheEntry { body, last_accessed: Instant::now() });
+            lru.put(
+                (id, idx),
+                CacheEntry {
+                    body,
+                    last_accessed: Instant::now(),
+                },
+            );
             bytes += size;
         }
         self.bytes_in_cache.store(bytes, Ordering::Relaxed);
         Ok(())
     }
 
-    pub fn max_bytes(&self) -> u64 { self.max_bytes }
+    pub fn max_bytes(&self) -> u64 {
+        self.max_bytes
+    }
 
-    pub fn bytes_in_cache(&self) -> u64 { self.bytes_in_cache.load(Ordering::Relaxed) }
+    pub fn bytes_in_cache(&self) -> u64 {
+        self.bytes_in_cache.load(Ordering::Relaxed)
+    }
 
     fn entry_path(&self, key: &CacheKey) -> PathBuf {
         let (id, idx) = *key;
@@ -97,6 +107,11 @@ impl PreviewCache {
     pub fn get(&self, key: &CacheKey) -> Option<Vec<u8>> {
         let mut lru = self.inner.lock().unwrap();
         lru.get(key).map(|e| e.body.clone())
+    }
+
+    pub fn contains(&self, key: &CacheKey) -> bool {
+        let lru = self.inner.lock().unwrap();
+        lru.contains(key)
     }
 
     /// Get from cache or compute via `compute`, persisting the result
@@ -115,7 +130,7 @@ impl PreviewCache {
         Ok(body)
     }
 
-    async fn insert(&self, key: CacheKey, body: Vec<u8>) -> Result<()> {
+    pub async fn insert(&self, key: CacheKey, body: Vec<u8>) -> Result<()> {
         let size = body.len() as u64;
         let final_path = self.entry_path(&key);
         let tmp_path = self.dir.join(format!(
@@ -128,11 +143,18 @@ impl PreviewCache {
 
         let to_remove = {
             let mut lru = self.inner.lock().unwrap();
-            // lru::LruCache::push returns the evicted entry if over capacity.
-            // We use put() to control ordering precisely.
-            if let Some(old) = lru.put(key, CacheEntry { body, last_accessed: Instant::now() }) {
-                // old entry was displaced; nothing to do, capacity-side handled by lru crate.
-                let _ = old;
+            let old_size = lru
+                .put(
+                    key,
+                    CacheEntry {
+                        body,
+                        last_accessed: Instant::now(),
+                    },
+                )
+                .map(|old| old.body.len() as u64)
+                .unwrap_or(0);
+            if old_size > 0 {
+                self.bytes_in_cache.fetch_sub(old_size, Ordering::Relaxed);
             }
             self.bytes_in_cache.fetch_add(size, Ordering::Relaxed);
             self.evict_to_waterline_locked(&mut lru)
@@ -183,10 +205,15 @@ impl PreviewCache {
     /// invalidate naturally).
     pub fn invalidate(&self, id: i64) {
         let mut lru = self.inner.lock().unwrap();
-        let keys: Vec<CacheKey> = lru.iter().map(|(k, _)| *k).filter(|(k_id, _)| *k_id == id).collect();
+        let keys: Vec<CacheKey> = lru
+            .iter()
+            .map(|(k, _)| *k)
+            .filter(|(k_id, _)| *k_id == id)
+            .collect();
         for k in keys {
             if let Some(entry) = lru.pop(&k) {
-                self.bytes_in_cache.fetch_sub(entry.body.len() as u64, Ordering::Relaxed);
+                self.bytes_in_cache
+                    .fetch_sub(entry.body.len() as u64, Ordering::Relaxed);
             }
             let _ = std::fs::remove_file(self.entry_path(&k));
         }
@@ -264,8 +291,14 @@ mod tests {
         let cache = PreviewCache::new(dir.path(), 1024 * 1024).unwrap();
         let k1 = (1, 0usize);
         let k2 = (1, 1usize);
-        let _ = cache.get_or_compute(k1, || async { Ok::<_, anyhow::Error>(b"v1".to_vec()) }).await.unwrap();
-        let _ = cache.get_or_compute(k2, || async { Ok::<_, anyhow::Error>(b"v2".to_vec()) }).await.unwrap();
+        let _ = cache
+            .get_or_compute(k1, || async { Ok::<_, anyhow::Error>(b"v1".to_vec()) })
+            .await
+            .unwrap();
+        let _ = cache
+            .get_or_compute(k2, || async { Ok::<_, anyhow::Error>(b"v2".to_vec()) })
+            .await
+            .unwrap();
 
         assert_eq!(cache.bytes_in_cache(), 4);
         assert!(dir.path().join("1-0.webp").exists());
@@ -280,14 +313,16 @@ mod tests {
         for i in 0..5i64 {
             let key = (i, i as usize);
             let _ = cache
-                .get_or_compute(key, || async {
-                    Ok::<_, anyhow::Error>(vec![b'x'; 30])
-                })
+                .get_or_compute(key, || async { Ok::<_, anyhow::Error>(vec![b'x'; 30]) })
                 .await
                 .unwrap();
         }
         // Waterline = 100 * 80% = 80 → drop to ≤ 80 bytes kept (2 entries = 60 bytes).
-        assert!(cache.bytes_in_cache() <= 80, "should be at or under waterline; got {}", cache.bytes_in_cache());
+        assert!(
+            cache.bytes_in_cache() <= 80,
+            "should be at or under waterline; got {}",
+            cache.bytes_in_cache()
+        );
         // Oldest entries evicted; newest 2 retained.
         assert!(cache.get(&(4, 4usize)).is_some());
         assert!(cache.get(&(0, 0usize)).is_none());
@@ -310,7 +345,11 @@ mod tests {
         assert_eq!(cache.bytes_in_cache(), 150);
 
         cache.gc().await.unwrap();
-        assert!(cache.bytes_in_cache() <= 64, "gc should drain to waterline; got {}", cache.bytes_in_cache());
+        assert!(
+            cache.bytes_in_cache() <= 64,
+            "gc should drain to waterline; got {}",
+            cache.bytes_in_cache()
+        );
     }
 
     #[tokio::test]
@@ -321,7 +360,10 @@ mod tests {
         let k2 = (5, 1usize);
         let k3 = (6, 0usize);
         for k in [k1, k2, k3] {
-            let _ = cache.get_or_compute(k, || async { Ok::<_, anyhow::Error>(b"x".to_vec()) }).await.unwrap();
+            let _ = cache
+                .get_or_compute(k, || async { Ok::<_, anyhow::Error>(b"x".to_vec()) })
+                .await
+                .unwrap();
         }
         assert_eq!(cache.bytes_in_cache(), 3);
 

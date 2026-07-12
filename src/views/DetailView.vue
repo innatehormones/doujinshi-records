@@ -6,7 +6,18 @@ import {
 } from "naive-ui"
 import { useLibraryStore, useSettingsStore } from "@/stores"
 import { api } from "@/api/tauri"
+import { putImageThumb } from "@/api/http"
 import type { FileSummary, MetadataPatch, DetailImage } from "@/types/api"
+
+const PREVIEW_MAX_EDGE = 1000
+const THUMB_UPLOAD_CONCURRENCY = 1
+
+type ThumbJob = {
+  img: DetailImage
+  index: number
+  el: HTMLImageElement
+  fileId: number
+}
 
 const route = useRoute()
 const router = useRouter()
@@ -17,6 +28,9 @@ const message = useMessage()
 // 每张图的加载状态。img-props 的 onLoad/onError 触发 set 更新。
 const loadedSet = ref(new Set<string>())
 const failedSet = ref(new Set<string>())
+const thumbUploadedSet = ref(new Set<string>())
+const thumbQueue: ThumbJob[] = []
+let activeThumbJobs = 0
 const loadedCount = computed(() => loadedSet.value.size)
 function markLoaded(name: string) {
   if (loadedSet.value.has(name)) return
@@ -30,6 +44,78 @@ function markFailed(name: string) {
   next.add(name)
   failedSet.value = next
 }
+function handleImageLoad(img: DetailImage, index: number, event: Event) {
+  markLoaded(img.name)
+  const el = event.target
+  if (!(el instanceof HTMLImageElement)) return
+  enqueueThumb(img, index, el)
+}
+function enqueueThumb(img: DetailImage, index: number, el: HTMLImageElement) {
+  if (img.thumb_cached) return
+  const fileId = id.value
+  const key = `${fileId}:${img.url}`
+  if (thumbUploadedSet.value.has(key)) return
+  const next = new Set(thumbUploadedSet.value)
+  next.add(key)
+  thumbUploadedSet.value = next
+  thumbQueue.push({ img, index, el, fileId })
+  drainThumbQueue()
+}
+function drainThumbQueue() {
+  while (activeThumbJobs < THUMB_UPLOAD_CONCURRENCY && thumbQueue.length > 0) {
+    const job = thumbQueue.shift()
+    if (!job) return
+    activeThumbJobs += 1
+    void runThumbJob(job)
+  }
+}
+function waitForIdle(): Promise<void> {
+  return new Promise((resolve) => {
+    if ("requestIdleCallback" in window) {
+      window.requestIdleCallback(() => resolve(), { timeout: 1000 })
+      return
+    }
+    globalThis.setTimeout(resolve, 32)
+  })
+}
+async function runThumbJob(job: ThumbJob) {
+  try {
+    if (job.fileId !== id.value) return
+    await waitForIdle()
+    if (job.fileId !== id.value) return
+    await uploadThumb(job)
+  } catch (e) {
+    console.warn("thumbnail conversion failed", e)
+  } finally {
+    activeThumbJobs -= 1
+    drainThumbQueue()
+  }
+}
+async function uploadThumb(job: ThumbJob) {
+  const { index, el, fileId } = job
+  if (!el.naturalWidth || !el.naturalHeight) return
+  if (el.naturalWidth <= PREVIEW_MAX_EDGE && el.naturalHeight <= PREVIEW_MAX_EDGE) return
+
+  const scale = Math.min(PREVIEW_MAX_EDGE / el.naturalWidth, PREVIEW_MAX_EDGE / el.naturalHeight)
+  const width = Math.max(1, Math.round(el.naturalWidth * scale))
+  const height = Math.max(1, Math.round(el.naturalHeight * scale))
+  const canvas = document.createElement("canvas")
+  canvas.width = width
+  canvas.height = height
+  const ctx = canvas.getContext("2d")
+  if (!ctx) return
+  ctx.drawImage(el, 0, 0, width, height)
+  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", 0.7))
+  if (!blob || blob.type !== "image/webp" || fileId !== id.value) return
+  const resp = await putImageThumb(fileId, index, blob)
+  if (!resp.ok) {
+    console.warn("thumbnail upload failed", resp.status, await resp.text())
+    return
+  }
+  if (images.value[index]?.url === job.img.url) {
+    images.value[index].thumb_cached = true
+  }
+}
 // 切换文件时清空进度状态（watch 声明放在 images 之后，避免 TDZ）。
 const id = computed(() => Number(route.params.id))
 const file = ref<FileSummary | null>(null)
@@ -40,6 +126,8 @@ const saving = ref(false)
 watch(images, () => {
   loadedSet.value = new Set()
   failedSet.value = new Set()
+  thumbUploadedSet.value = new Set()
+  thumbQueue.length = 0
 })
 
 // 编辑表单（编辑后保存通过 store.updateMetadataFor → PATCH）
@@ -197,7 +285,7 @@ function locationLabel(): string {
                 <template v-if="failedSet.size > 0">· 失败 {{ failedSet.size }}</template>
               </span>
             </div>
-            <div v-for="img in images" :key="img.name" class="thumb-cell">
+            <div v-for="(img, idx) in images" :key="img.name" class="thumb-cell">
               <div
                 v-if="!loadedSet.has(img.name) && !failedSet.has(img.name)"
                 class="thumb-skeleton"
@@ -212,7 +300,8 @@ function locationLabel(): string {
                 :img-props="{
                   style: 'cursor: zoom-in; width: 160px; height: 200px; object-fit: cover; display: block;',
                   loading: 'lazy',
-                  onLoad: () => markLoaded(img.name),
+                  crossorigin: 'anonymous',
+                  onLoad: (event: Event) => { void handleImageLoad(img, idx, event) },
                   onError: () => markFailed(img.name),
                 }"
                 class="album-thumb"

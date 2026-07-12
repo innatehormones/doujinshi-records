@@ -4,8 +4,9 @@
 //! is injected in one place. The frontend never builds raw `fetch`
 //! requests against `127.0.0.1:<port>`.
 //!
-//! NB: `/api/covers/*` is auth-exempt on the backend so `<img>` tags
-//! can keep using the bare URL — this client is for the JSON API only.
+//! NB: `/api/covers/*` and GET `/api/doujinshi/*/images/*` are auth-exempt
+//! on the backend so `<img>` tags can keep using bare URLs. Write calls still
+//! use this client so the bearer token is injected.
 
 import { useSettingsStore } from "@/stores"
 import type { ConflictCompare, DetailImagesResponse, MetadataPatch } from "@/types/api"
@@ -66,6 +67,15 @@ export async function apiPatch(path: string, body: unknown): Promise<Response> {
   })
 }
 
+export async function apiPut(path: string, body: BodyInit, contentType: string): Promise<Response> {
+  const base = await ensureBase()
+  const headers = {
+    ...(await authHeader()),
+    "Content-Type": contentType,
+  }
+  return fetch(base + path, { method: "PUT", headers, body })
+}
+
 export async function fetchCompare(conflictId: number): Promise<ConflictCompare> {
   return apiGet<ConflictCompare>(`/api/conflicts/${conflictId}/compare`)
 }
@@ -76,4 +86,8 @@ export async function fetchDetailImages(id: number): Promise<DetailImagesRespons
 
 export async function patchMetadata(id: number, patch: MetadataPatch): Promise<Response> {
   return apiPatch(`/api/doujinshi/${id}`, patch)
+}
+
+export async function putImageThumb(id: number, index: number, blob: Blob): Promise<Response> {
+  return apiPut(`/api/doujinshi/${id}/images/${index}/thumb`, blob, "image/webp")
 }

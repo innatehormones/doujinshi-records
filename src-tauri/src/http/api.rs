@@ -1,11 +1,12 @@
 use crate::db::entities::doujinshi_file;
 use crate::http::ApiState;
 use crate::models::file_summary;
+use axum::body::Bytes;
 use axum::extract::{Path, Query, State};
 use axum::http::{header, StatusCode};
 use axum::response::IntoResponse;
 use axum::Json;
-use sea_orm::{ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect, PaginatorTrait};
+use sea_orm::{ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use std::time::SystemTime;
@@ -26,12 +27,13 @@ pub async fn search(
     State(s): State<ApiState>,
     Query(p): Query<SearchParams>,
 ) -> Json<serde_json::Value> {
-    let mut q = doujinshi_file::Entity::find()
-        .filter(doujinshi_file::Column::PhysicallyDeleted.eq(false));
+    let mut q =
+        doujinshi_file::Entity::find().filter(doujinshi_file::Column::PhysicallyDeleted.eq(false));
     if let Some(text) = p.q.as_deref().filter(|s| !s.is_empty()) {
         let pat = format!("%{}%", text);
         q = q.filter(
-            doujinshi_file::Column::Title.like(&pat)
+            doujinshi_file::Column::Title
+                .like(&pat)
                 .or(doujinshi_file::Column::Circle.like(&pat))
                 .or(doujinshi_file::Column::Filename.like(&pat)),
         );
@@ -46,12 +48,7 @@ pub async fn search(
     }
     let limit = p.limit.unwrap_or(50);
     let offset = p.offset.unwrap_or(0);
-    let total: u64 = q
-        .clone()
-        .count(&s.conn)
-        .await
-        .ok()
-        .unwrap_or(0);
+    let total: u64 = q.clone().count(&s.conn).await.ok().unwrap_or(0);
     let rows = q
         .order_by_desc(doujinshi_file::Column::CreatedAt)
         .limit(limit)
@@ -59,8 +56,7 @@ pub async fn search(
         .all(&s.conn)
         .await
         .unwrap_or_default();
-    let items: Vec<file_summary::FileSummary> =
-        rows.iter().map(file_summary::from_model).collect();
+    let items: Vec<file_summary::FileSummary> = rows.iter().map(file_summary::from_model).collect();
     Json(json!({ "items": items, "total": total }))
 }
 
@@ -79,10 +75,7 @@ pub async fn by_hash(
     }
 }
 
-pub async fn by_id(
-    State(s): State<ApiState>,
-    Path(id): Path<i64>,
-) -> impl IntoResponse {
+pub async fn by_id(State(s): State<ApiState>, Path(id): Path<i64>) -> impl IntoResponse {
     let row = doujinshi_file::Entity::find_by_id(id)
         .one(&s.conn)
         .await
@@ -93,10 +86,7 @@ pub async fn by_id(
     }
 }
 
-pub async fn cover(
-    State(s): State<ApiState>,
-    Path(hash): Path<String>,
-) -> impl IntoResponse {
+pub async fn cover(State(s): State<ApiState>, Path(hash): Path<String>) -> impl IntoResponse {
     let row = doujinshi_file::Entity::find()
         .filter(doujinshi_file::Column::Hash.eq(&hash))
         .one(&s.conn)
@@ -150,10 +140,7 @@ pub async fn check(
 
 /// `POST /api/doujinshi/:id/viewed` — mark a single file as viewed.
 /// Returns 204 on success, 404 when the id does not exist.
-pub async fn mark_viewed_http(
-    State(s): State<ApiState>,
-    Path(id): Path<i64>,
-) -> impl IntoResponse {
+pub async fn mark_viewed_http(State(s): State<ApiState>, Path(id): Path<i64>) -> impl IntoResponse {
     use sea_orm::{ActiveModelTrait, EntityTrait, Set};
     let row = match doujinshi_file::Entity::find_by_id(id).one(&s.conn).await {
         Ok(Some(r)) => r,
@@ -209,10 +196,7 @@ pub struct ConflictCompare {
 /// conflict: the already-identified row (A) and the new zip still
 /// sitting in the inbox (B). Used by the ConflictView page so the
 /// user can decide which copy to keep.
-pub async fn compare(
-    State(s): State<ApiState>,
-    Path(conflict_id): Path<i64>,
-) -> impl IntoResponse {
+pub async fn compare(State(s): State<ApiState>, Path(conflict_id): Path<i64>) -> impl IntoResponse {
     use crate::db::entities::conflict::Entity as ConflictEntity;
 
     let row = match ConflictEntity::find_by_id(conflict_id).one(&s.conn).await {
@@ -297,6 +281,8 @@ pub struct ImageEntry {
     /// Path-only image URL — frontend prepends `useSettingsStore.apiBase`.
     /// Individual bytes served by `GET /api/doujinshi/:id/images/:index`.
     pub url: String,
+    /// True when `/images/:index` will hit preview_cache and return webp.
+    pub thumb_cached: bool,
 }
 
 #[derive(Serialize)]
@@ -350,19 +336,19 @@ pub async fn images(
     let etag = format!(
         "\"{}-{}\"",
         id,
-        mtime.duration_since(SystemTime::UNIX_EPOCH)
+        mtime
+            .duration_since(SystemTime::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0)
     );
 
     // If-None-Match → 304
-    if let Some(if_none_match) = headers.get(header::IF_NONE_MATCH).and_then(|v| v.to_str().ok()) {
+    if let Some(if_none_match) = headers
+        .get(header::IF_NONE_MATCH)
+        .and_then(|v| v.to_str().ok())
+    {
         if if_none_match == etag {
-            return (
-                StatusCode::NOT_MODIFIED,
-                [(header::ETAG, etag.clone())],
-            )
-                .into_response();
+            return (StatusCode::NOT_MODIFIED, [(header::ETAG, etag.clone())]).into_response();
         }
     }
 
@@ -379,9 +365,14 @@ pub async fn images(
         .map(|(idx, name)| ImageEntry {
             url: format!("/api/doujinshi/{}/images/{}", id, idx),
             name,
+            thumb_cached: s.preview_cache.contains(&(id, idx)),
         })
         .collect();
-    let response = ImagesResponse { file_id: id, images, zip_missing: false };
+    let response = ImagesResponse {
+        file_id: id,
+        images,
+        zip_missing: false,
+    };
 
     (
         StatusCode::OK,
@@ -391,8 +382,10 @@ pub async fn images(
         .into_response()
 }
 
-/// `GET /api/doujinshi/:id/images/:index` — 解图 → 转 webp q=70 ≤1600px →
-/// 落 LRU（命中直接吐）。Auth-exempt（`<img>` 直读）。
+/// `GET /api/doujinshi/:id/images/:index` — cache hit 直接吐 webp 缩略图；
+/// cache miss 时不解码不转码，zip 解压原图直返（mime 按 magic bytes 探测）。
+/// 缩略图 webp 由前端 canvas 转好后通过 `PUT .../thumb` 落 LRU。
+/// Auth-exempt（`<img>` 直读）。
 pub async fn image_at(
     State(s): State<ApiState>,
     Path((id, index)): Path<(i64, usize)>,
@@ -415,30 +408,33 @@ pub async fn image_at(
         return StatusCode::NOT_FOUND.into_response();
     }
 
-    // 解图 + 转码都在 blocking 线程里（zip 读同步 + image decode CPU 密集）。
+    // zip 解压单图（同步 I/O）→ 走 blocking 线程，原图 bytes 直返。
     let path_owned = path.to_path_buf();
-    let transcode = tokio::task::spawn_blocking(move || -> anyhow::Result<Vec<u8>> {
-        let (_, raw) = crate::services::archive::read_image_at(&path_owned, index)?;
-        crate::services::cover_format::transcode_to_preview_webp(&raw)
+    let result = tokio::task::spawn_blocking(move || {
+        crate::services::archive::read_image_at(&path_owned, index)
     })
     .await;
 
-    let bytes = match transcode {
-        Ok(Ok(b)) => b,
+    let (_name, raw) = match result {
+        Ok(Ok(v)) => v,
         Ok(Err(_)) => return StatusCode::NOT_FOUND.into_response(),
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     };
 
-    // fire-and-forget 落 LRU
-    let cache = s.preview_cache.clone();
-    let body = bytes.clone();
-    tokio::spawn(async move {
-        let _ = cache
-            .get_or_compute(key, || async { Ok::<_, anyhow::Error>(body) })
-            .await;
-    });
+    let mime = image_mime(&raw);
+    ([(header::CONTENT_TYPE, mime)], raw).into_response()
+}
 
-    webp_response(bytes, &etag)
+/// 按 magic bytes 探测图像 mime（zip 解出的原图）。仅覆盖 webp / png /
+/// jpeg 三种——其他（gif/bmp 等）按 jpeg 处理，浏览器多能猜对。
+fn image_mime(bytes: &[u8]) -> &'static str {
+    if bytes.len() >= 12 && &bytes[0..4] == b"RIFF" && &bytes[8..12] == b"WEBP" {
+        "image/webp"
+    } else if bytes.len() >= 8 && bytes.starts_with(b"\x89PNG\r\n\x1a\n") {
+        "image/png"
+    } else {
+        "image/jpeg"
+    }
 }
 
 fn webp_response(bytes: Vec<u8>, etag: &str) -> axum::response::Response {
@@ -448,6 +444,30 @@ fn webp_response(bytes: Vec<u8>, etag: &str) -> axum::response::Response {
         bytes,
     )
         .into_response()
+}
+
+/// `PUT /api/doujinshi/:id/images/:index/thumb` — 前端用 canvas 把原图转
+/// 成 webp q=70 ≤1000px 后写入 preview_cache。后续 GET 命中直吐。
+pub async fn put_image_thumb(
+    State(s): State<ApiState>,
+    Path((id, index)): Path<(i64, usize)>,
+    body: Bytes,
+) -> impl IntoResponse {
+    if body.is_empty() {
+        return (StatusCode::BAD_REQUEST, "empty body").into_response();
+    }
+    let mime = image_mime(&body);
+    if mime != "image/webp" {
+        return (StatusCode::BAD_REQUEST, "not webp").into_response();
+    }
+    let key: crate::services::preview_cache::CacheKey = (id, index);
+    if s.preview_cache.contains(&key) {
+        return StatusCode::NO_CONTENT.into_response();
+    }
+    match s.preview_cache.insert(key, body.to_vec()).await {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    }
 }
 
 /// 封面文件实际是 webp（V3+）或 jpg（V1/V2 旧数据）。按 magic bytes 探测
