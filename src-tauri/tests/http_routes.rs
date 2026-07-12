@@ -521,6 +521,44 @@ async fn image_at_returns_original_bytes_on_cache_miss() {
     );
 }
 
+#[tokio::test]
+async fn images_reports_thumb_cached_when_only_disk_has_file() {
+    // LRU 跟磁盘可能不一致（eviction 删盘失败 / 测试残留 / 启动 reload
+    // 失败等）。/images 端点必须以"磁盘有文件"为最终依据，否则前端会误判
+    // 未缓存、重复跑 Worker。
+    let h = build_state().await;
+    let zip = h.resources_dir.path().join("stale.zip");
+    std::fs::write(&zip, build_test_zip(&[("01.png", b"x")])).unwrap();
+    let id = seed_file_with_zip(&h.state.conn, &zip, "stale.zip").await;
+    // 直接写磁盘，绕过 LRU。
+    let on_disk = h
+        .resources_dir
+        .path()
+        .join("_preview_cache")
+        .join(format!("{}-0.webp", id));
+    std::fs::write(&on_disk, b"RIFF\x10\x00\x00\x00WEBPstale").unwrap();
+    assert!(
+        !h.state.preview_cache.contains(&(id, 0usize)),
+        "LRU should be empty for this key"
+    );
+
+    let resp = router(h.state)
+        .oneshot(authed_request(
+            "GET",
+            &format!("/api/doujinshi/{}/images", id),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(
+        v["images"][0]["thumb_cached"].as_bool().unwrap(),
+        true,
+        "thumb_cached must reflect disk presence, not just LRU"
+    );
+}
+
 fn thumb_request(uri: &str, body: &[u8]) -> Request<Body> {
     Request::builder()
         .method("PUT")
@@ -972,6 +1010,11 @@ async fn images_endpoint_returns_304_when_etag_matches() {
         .unwrap()
         .to_string();
     assert!(etag.starts_with(&format!("\"{}-", id)));
+    // thumb_cached 是运行时状态（依赖磁盘文件存在），不能进浏览器缓存。
+    assert_eq!(
+        resp.headers().get("cache-control").unwrap(),
+        "no-store"
+    );
 
     // Second request with If-None-Match → 304.
     let req = Request::builder()

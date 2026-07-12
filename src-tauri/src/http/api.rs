@@ -365,7 +365,11 @@ pub async fn images(
         .map(|(idx, name)| ImageEntry {
             url: format!("/api/doujinshi/{}/images/{}", id, idx),
             name,
-            thumb_cached: s.preview_cache.contains(&(id, idx)),
+            // LRU miss 但磁盘文件存在的情况：eviction 删盘失败 / 启动 reload
+            // 期间文件被改 / 测试残留等都会让 LRU 与磁盘不一致。仅看 LRU 会
+            // 让前端误以为未缓存，重复跑 Worker。
+            thumb_cached: s.preview_cache.contains(&(id, idx))
+                || s.preview_cache.is_on_disk(&(id, idx)),
         })
         .collect();
     let response = ImagesResponse {
@@ -376,7 +380,13 @@ pub async fn images(
 
     (
         StatusCode::OK,
-        [(header::ETAG, etag.as_str())],
+        [
+            (header::ETAG, etag.as_str()),
+            // thumb_cached 字段依赖磁盘文件存在与否（运行时变化），不能
+            // 让浏览器缓存旧 body（304 短路会复用旧 thumb_cached 值，导致
+            // 前端误判未缓存、重复跑 Worker）。
+            (header::CACHE_CONTROL, "no-store"),
+        ],
         Json(response),
     )
         .into_response()
@@ -397,18 +407,28 @@ pub async fn image_at(
         return webp_response(bytes, &etag);
     }
 
+    match raw_image_response(&s, id, index).await {
+        Ok(resp) => resp,
+        Err(resp) => resp,
+    }
+}
+
+async fn raw_image_response(
+    s: &ApiState,
+    id: i64,
+    index: usize,
+) -> Result<axum::response::Response, axum::response::Response> {
     use sea_orm::EntityTrait;
     let row = match doujinshi_file::Entity::find_by_id(id).one(&s.conn).await {
         Ok(Some(r)) => r,
-        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        Ok(None) => return Err(StatusCode::NOT_FOUND.into_response()),
+        Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()),
     };
     let path = std::path::Path::new(&row.current_path);
     if !path.exists() {
-        return StatusCode::NOT_FOUND.into_response();
+        return Err(StatusCode::NOT_FOUND.into_response());
     }
 
-    // zip 解压单图（同步 I/O）→ 走 blocking 线程，原图 bytes 直返。
     let path_owned = path.to_path_buf();
     let result = tokio::task::spawn_blocking(move || {
         crate::services::archive::read_image_at(&path_owned, index)
@@ -417,12 +437,12 @@ pub async fn image_at(
 
     let (_name, raw) = match result {
         Ok(Ok(v)) => v,
-        Ok(Err(_)) => return StatusCode::NOT_FOUND.into_response(),
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+        Ok(Err(_)) => return Err(StatusCode::NOT_FOUND.into_response()),
+        Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()),
     };
 
     let mime = image_mime(&raw);
-    ([(header::CONTENT_TYPE, mime)], raw).into_response()
+    Ok(([(header::CONTENT_TYPE, mime)], raw).into_response())
 }
 
 /// 按 magic bytes 探测图像 mime（zip 解出的原图）。仅覆盖 webp / png /

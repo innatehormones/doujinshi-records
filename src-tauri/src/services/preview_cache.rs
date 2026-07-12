@@ -114,6 +114,13 @@ impl PreviewCache {
         lru.contains(key)
     }
 
+    /// 检查磁盘上是否有该 key 的缓存文件。即使 LRU 因为 eviction / 重启
+    /// 后没加载等原因 miss，磁盘文件存在时仍算 cache hit。前端据此跳过
+    /// Worker 缩放，直接渲染。
+    pub fn is_on_disk(&self, key: &CacheKey) -> bool {
+        self.entry_path(key).is_file()
+    }
+
     /// Get from cache or compute via `compute`, persisting the result
     /// to disk. If the cache is full, evicts LRU entries until
     /// `bytes_in_cache <= max_bytes * 80%`.
