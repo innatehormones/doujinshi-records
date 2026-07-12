@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use std::cmp::Ordering;
 use std::path::Path;
 
 use crate::services::rar_detect::{RarLocation, RarTool};
@@ -9,6 +10,79 @@ const IMG_EXTS: &[&str] = &["jpg", "jpeg", "png", "webp"];
 pub struct ArchiveImageEntry {
     pub name: String,
     pub data: Vec<u8>,
+}
+
+/// "Natural" sort key for archive entry names: split into alternating
+/// digit / non-digit runs; digit runs compare as `u128` (so `2` < `10`),
+/// non-digit runs compare lexicographically.  Mirrors the human intuition
+/// behind tools like 7-Zip's "natural sort" so 7z/WinRAR-packed zips
+/// whose Central Directory order does not match the visible filename
+/// order (e.g. `imgi_2_..._01.jpg` stored before `imgi_10_..._10.jpg`)
+/// display in page order, not writer order.
+fn natural_sort_key(s: &str) -> Vec<NaturalChunk> {
+    let bytes = s.as_bytes();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i].is_ascii_digit() {
+            let start = i;
+            let mut n: u128 = 0;
+            // Cap at 39 digits to keep `n` well inside u128; we only
+            // care about ordinal comparison, not the actual number.
+            let mut taken = 0;
+            while i < bytes.len() && bytes[i].is_ascii_digit() && taken < 39 {
+                n = n.saturating_mul(10).saturating_add((bytes[i] - b'0') as u128);
+                i += 1;
+                taken += 1;
+            }
+            out.push(NaturalChunk::Digits(n));
+            let _ = start;
+        } else {
+            let start = i;
+            while i < bytes.len() && !bytes[i].is_ascii_digit() {
+                i += 1;
+            }
+            out.push(NaturalChunk::Text(s[start..i].to_string()));
+        }
+    }
+    out
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum NaturalChunk {
+    Digits(u128),
+    Text(String),
+}
+
+impl PartialOrd for NaturalChunk {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for NaturalChunk {
+    fn cmp(&self, other: &Self) -> Ordering {
+        match (self, other) {
+            (NaturalChunk::Digits(a), NaturalChunk::Digits(b)) => a.cmp(b),
+            (NaturalChunk::Text(a), NaturalChunk::Text(b)) => a.cmp(b),
+            // Tie-break: digit chunks come before text chunks when one
+            // side is exhausted early (e.g. "page2" vs "page10" — at
+            // the position where '2' is on one side and '1' on the
+            // other, both are digits so we never hit this; but a text
+            // chunk vs a digit chunk is unreachable because we always
+            // emit digit→text→digit→text in lockstep from the same
+            // index).  Left here as a defensive fallback.
+            (NaturalChunk::Digits(_), NaturalChunk::Text(_)) => Ordering::Less,
+            (NaturalChunk::Text(_), NaturalChunk::Digits(_)) => Ordering::Greater,
+        }
+    }
+}
+
+/// Sort image names by natural key. `unstable` is fine — names are
+/// unique within an archive, so equal keys can keep their original
+/// relative order without observable difference.
+fn sort_names_natural(names: &mut [String]) {
+    names.sort_unstable_by(|a, b| natural_sort_key(a).cmp(&natural_sort_key(b)));
 }
 
 pub fn list_images(path: &Path) -> Result<Vec<ArchiveImageEntry>> {
@@ -31,6 +105,10 @@ pub fn list_images(path: &Path) -> Result<Vec<ArchiveImageEntry>> {
             out.push(ArchiveImageEntry { name, data });
         }
     }
+    // Cover selection uses `candidates.first()` as a fallback, and
+    // the public listing is sorted, so sort here too for stability
+    // between the two callers.
+    out.sort_unstable_by(|a, b| natural_sort_key(&a.name).cmp(&natural_sort_key(&b.name)));
     Ok(out)
 }
 
@@ -42,7 +120,7 @@ pub fn pick_cover(candidates: &[ArchiveImageEntry]) -> Option<&ArchiveImageEntry
     }) {
         return Some(c);
     }
-    // 2) first in zip order
+    // 2) first in listing order (post-sort)
     candidates.first()
 }
 
@@ -52,36 +130,54 @@ pub fn pick_cover(candidates: &[ArchiveImageEntry]) -> Option<&ArchiveImageEntry
 /// derive a MIME type from the extension without re-parsing.
 ///
 /// Skips directories and non-image entries internally so the index
-/// lines up with the public listing.
+/// lines up with the public listing.  The list is sorted with a
+/// natural-order key so the index is stable across archives whose
+/// Central Directory order does not match the visible filename
+/// order — see `natural_sort_key`.
 pub fn read_image_at(path: &Path, index: usize) -> Result<(String, Vec<u8>)> {
     if path.extension().and_then(|e| e.to_str()) != Some("zip") {
         return Err(anyhow!("unsupported archive format (zip only for V1)"));
     }
     let f = std::fs::File::open(path)?;
     let mut zip = zip::ZipArchive::new(f)?;
-    let mut seen = 0usize;
+    // 1) collect all image names in the same order callers will see
+    //    them (Central Directory order, skipping directories and
+    //    non-image entries).
+    let mut names: Vec<String> = Vec::new();
     for i in 0..zip.len() {
-        let mut entry = zip.by_index(i)?;
+        let entry = zip.by_index(i)?;
         if !entry.is_file() {
             continue;
         }
         let name = entry.name().to_string();
         let lower = name.to_lowercase();
-        if !IMG_EXTS.iter().any(|e| lower.ends_with(&format!(".{}", e))) {
-            continue;
+        if IMG_EXTS.iter().any(|e| lower.ends_with(&format!(".{}", e))) {
+            names.push(name);
         }
-        if seen == index {
-            let mut data = Vec::with_capacity(entry.size() as usize);
-            std::io::copy(&mut entry, &mut data)?;
-            return Ok((name, data));
-        }
-        seen += 1;
     }
-    Err(anyhow!("image index {} out of range", index))
+    // 2) sort with the same natural key so `index` matches the
+    //    detail page's grid order.
+    sort_names_natural(&mut names);
+    let target = names
+        .into_iter()
+        .nth(index)
+        .ok_or_else(|| anyhow!("image index {} out of range", index))?;
+
+    // 3) reopen and read the matching entry by name.  Opening twice
+    //    is cheaper than the alternative of keeping the archive open
+    //    while we look up the entry by re-scanning Central Directory.
+    let f2 = std::fs::File::open(path)?;
+    let mut zip2 = zip::ZipArchive::new(f2)?;
+    let mut entry = zip2.by_name(&target)?;
+    let mut data = Vec::with_capacity(entry.size() as usize);
+    std::io::copy(&mut entry, &mut data)?;
+    Ok((target, data))
 }
 
 /// Like `list_images` but only returns entry names — used by the
 /// conflict compare endpoint which never needs the file bytes.
+/// Names are sorted with the natural-order key so the returned
+/// order matches the public listing (`list_image_names_sorted`).
 ///
 /// Intentionally zip-only for V1; the RAR compare path waits for
 /// sub-plan #7 (full RAR extraction).
@@ -103,7 +199,19 @@ pub fn list_image_names(path: &Path) -> Result<Vec<String>> {
             names.push(name);
         }
     }
+    sort_names_natural(&mut names);
     Ok(names)
+}
+
+/// Public listing for the detail page: same filtering as
+/// `list_image_names` but guaranteed to be sorted by natural key
+/// before returning, and the public index in the detail UI
+/// (`ImageEntry.url` and `read_image_at(path, idx)`) lines up with
+/// this order.  `list_image_names` is kept for back-compat with
+/// callers that don't need ordering (e.g. the conflict compare path
+/// which just lists names without indexes).
+pub fn list_image_names_sorted(path: &Path) -> Result<Vec<String>> {
+    list_image_names(path)
 }
 
 // =================================================================
@@ -321,6 +429,120 @@ mod tests {
         let p = dir.path().join("t.zip");
         std::fs::write(&p, zip_bytes).unwrap();
         assert!(read_image_at(&p, 1).is_err());
+    }
+
+    /// 7-Zip / WinRAR 打包的 zip 经常把 entry 写入顺序与"页号"顺序
+    /// 不一致（爬虫 / 多线程下载时按 NN 自然序写入文件，但页号是另
+    /// 一段数字）。`list_image_names` 必须按自然序重排，详情页
+    /// 才能按页号顺序展示。
+    #[test]
+    fn list_image_names_sorts_by_natural_key_when_writer_order_differs() {
+        // 模拟 unzip -l 看到的实际存储顺序：imgi_10 在最前，
+        // imgi_2/imgi_3 插在中间和末尾。
+        let zip_bytes = build_test_zip(&[
+            (
+                "第01话/imgi_10_g%2F公主的秘密与秘密的私生子%2F第01话%2F10.jpg",
+                b"img-10",
+            ),
+            (
+                "第01话/imgi_11_g%2F公主的秘密与秘密的私生子%2F第01话%2F11.jpg",
+                b"img-11",
+            ),
+            (
+                "第01话/imgi_2_g%2F公主的秘密与秘密的私生子%2F第01话%2F01.jpg",
+                b"img-1",
+            ),
+            (
+                "第01话/imgi_3_g%2F公主的秘密与秘密的私生子%2F第01话%2F02.jpg",
+                b"img-2",
+            ),
+        ]);
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("out_of_order.zip");
+        std::fs::write(&p, zip_bytes).unwrap();
+
+        let names = list_image_names(&p).unwrap();
+        assert_eq!(
+            names,
+            vec![
+                "第01话/imgi_2_g%2F公主的秘密与秘密的私生子%2F第01话%2F01.jpg",
+                "第01话/imgi_3_g%2F公主的秘密与秘密的私生子%2F第01话%2F02.jpg",
+                "第01话/imgi_10_g%2F公主的秘密与秘密的私生子%2F第01话%2F10.jpg",
+                "第01话/imgi_11_g%2F公主的秘密与秘密的私生子%2F第01话%2F11.jpg",
+            ],
+        );
+    }
+
+    /// `read_image_at` 必须跟 `list_image_names` 用同一个自然序——
+    /// 详情页 idx=0 的图必须跟 grid 第一个 cell 是同一张。
+    #[test]
+    fn read_image_at_uses_natural_sort_index() {
+        let zip_bytes = build_test_zip(&[
+            (
+                "第01话/imgi_10_g%2F...%2F10.jpg",
+                b"img-10",
+            ),
+            (
+                "第01话/imgi_2_g%2F...%2F01.jpg",
+                b"img-1",
+            ),
+            (
+                "第01话/imgi_3_g%2F...%2F02.jpg",
+                b"img-2",
+            ),
+        ]);
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("out_of_order.zip");
+        std::fs::write(&p, zip_bytes).unwrap();
+
+        // idx=0 必须是 01（自然序第一位），不是 zip 内写入顺序第一位（10）。
+        let (n, d) = read_image_at(&p, 0).unwrap();
+        assert!(n.contains("01.jpg"), "idx=0 should be the 01.jpg entry, got {}", n);
+        assert_eq!(d, b"img-1");
+        let (n, d) = read_image_at(&p, 2).unwrap();
+        assert!(n.contains("10.jpg"), "idx=2 should be the 10.jpg entry, got {}", n);
+        assert_eq!(d, b"img-10");
+    }
+
+    /// `list_images` 跟 `list_image_names` 必须用同一个自然序，
+    /// cover 提取用的 `pick_cover` 在没有 cover 关键字时回退到
+    /// `candidates.first()`，这个 first 应当跟详情页 grid 的第 0
+    /// 张图是同一张。
+    #[test]
+    fn list_images_uses_natural_sort_index() {
+        let zip_bytes = build_test_zip(&[
+            ("第01话/imgi_10_g%2F...%2F10.jpg", b"img-10"),
+            ("第01话/imgi_2_g%2F...%2F01.jpg", b"img-1"),
+            ("第01话/imgi_3_g%2F...%2F02.jpg", b"img-2"),
+        ]);
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("out_of_order.zip");
+        std::fs::write(&p, zip_bytes).unwrap();
+
+        let images = list_images(&p).unwrap();
+        assert!(images[0].name.contains("01.jpg"));
+        assert!(images[2].name.contains("10.jpg"));
+    }
+
+    /// `pick_cover` 在无 cover 关键字时回退到 first；这个 first 必
+    /// 须是自然序的第一张，而不是 zip 写入顺序的第一张。
+    #[test]
+    fn pick_cover_falls_back_to_natural_first() {
+        let zip_bytes = build_test_zip(&[
+            ("第01话/imgi_10_g%2F...%2F10.jpg", b"img-10"),
+            ("第01话/imgi_2_g%2F...%2F01.jpg", b"img-1"),
+        ]);
+        let dir = tempfile::tempdir().unwrap();
+        let p = dir.path().join("out_of_order.zip");
+        std::fs::write(&p, zip_bytes).unwrap();
+
+        let images = list_images(&p).unwrap();
+        let cover = pick_cover(&images).unwrap();
+        assert!(
+            cover.name.contains("01.jpg"),
+            "pick_cover should fall back to natural-sort first (01.jpg), got {}",
+            cover.name
+        );
     }
 }
 

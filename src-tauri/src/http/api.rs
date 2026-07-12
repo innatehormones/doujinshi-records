@@ -352,10 +352,13 @@ pub async fn images(
         }
     }
 
-    // Compute: list names only, build URL list. Bytes are served by
-    // /api/doujinshi/:id/images/:index so the SPA can stream them
-    // instead of pulling the whole archive in one base64 blob.
-    let names = match crate::services::archive::list_image_names(path) {
+    // Compute: list names only (natural-sorted), build URL list. Bytes
+    // are served by /api/doujinshi/:id/images/:index so the SPA can
+    // stream them instead of pulling the whole archive in one base64
+    // blob.  `list_image_names_sorted` is the public-listing sort so
+    // the SPA's `images[i].name` matches the `i` it sends back to
+    // `read_image_at`.
+    let names = match crate::services::archive::list_image_names_sorted(path) {
         Ok(n) => n,
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     };
