@@ -2,16 +2,42 @@
 import { ref, onMounted, computed, watch } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import {
-  NCard, NSpace, NButton, NSpin, NCarousel, NInput, NSelect, NEmpty, NAlert, useMessage,
+  NCard, NSpace, NButton, NSpin, NImage, NInput, NSelect, NEmpty, NAlert, useMessage,
 } from "naive-ui"
-import { useLibraryStore } from "@/stores"
+import { useLibraryStore, useSettingsStore } from "@/stores"
 import { api } from "@/api/tauri"
 import type { FileSummary, MetadataPatch, DetailImage } from "@/types/api"
 
 const route = useRoute()
 const router = useRouter()
 const store = useLibraryStore()
+const settings = useSettingsStore()
 const message = useMessage()
+
+// 每张图的加载状态。img-props 的 onLoad/onError 触发 set 更新。
+const loadedSet = ref(new Set<string>())
+const failedSet = ref(new Set<string>())
+const loadedCount = computed(() => loadedSet.value.size)
+function markLoaded(name: string) {
+  if (loadedSet.value.has(name)) return
+  const next = new Set(loadedSet.value)
+  next.add(name)
+  loadedSet.value = next
+}
+function markFailed(name: string) {
+  if (failedSet.value.has(name)) return
+  const next = new Set(failedSet.value)
+  next.add(name)
+  failedSet.value = next
+}
+// 切换文件时清空进度状态。
+watch(
+  () => images.value,
+  () => {
+    loadedSet.value = new Set()
+    failedSet.value = new Set()
+  },
+)
 
 const id = computed(() => Number(route.params.id))
 const file = ref<FileSummary | null>(null)
@@ -161,14 +187,42 @@ function locationLabel(): string {
             v-else-if="images.length === 0"
             description="zip 内无图片"
           />
-          <n-carousel v-else show-arrow autoplay>
-            <img
-              v-for="img in images"
-              :key="img.name"
-              :src="img.data_url"
-              :alt="img.name"
-            />
-          </n-carousel>
+          <div v-else class="album-grid">
+            <div class="album-progress">
+              <n-progress
+                type="line"
+                :percentage="images.length === 0 ? 0 : Math.round((loadedCount * 100) / images.length)"
+                :show-indicator="false"
+                :height="6"
+                style="margin-bottom: 6px;"
+              />
+              <span class="album-progress-text">
+                已加载 {{ loadedCount }} / {{ images.length }}
+                <template v-if="failedSet.size > 0">· 失败 {{ failedSet.size }}</template>
+              </span>
+            </div>
+            <div v-for="img in images" :key="img.name" class="thumb-cell">
+              <div
+                v-if="!loadedSet.has(img.name) && !failedSet.has(img.name)"
+                class="thumb-skeleton"
+              />
+              <n-image
+                :src="settings.apiBase + img.url"
+                :alt="img.name"
+                width="160"
+                height="200"
+                object-fit="cover"
+                show-toolbar
+                :img-props="{
+                  style: 'cursor: zoom-in; width: 160px; height: 200px; object-fit: cover; display: block;',
+                  loading: 'lazy',
+                  onLoad: () => markLoaded(img.name),
+                  onError: () => markFailed(img.name),
+                }"
+                class="album-thumb"
+              />
+            </div>
+          </div>
         </n-card>
 
         <n-card title="元数据" class="meta-pane">
@@ -253,10 +307,48 @@ function locationLabel(): string {
   gap: 16px;
 }
 .preview-pane { grid-row: span 2; }
-img {
-  max-width: 100%;
-  max-height: 80vh;
-  object-fit: contain;
+.album-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+  gap: 8px;
+  max-height: 75vh;
+  overflow-y: auto;
+  padding: 4px;
+}
+.album-thumb {
+  border-radius: 4px;
+  overflow: hidden;
+  background: var(--surface-muted, transparent);
+}
+.album-progress {
+  grid-column: 1 / -1;
+  margin-bottom: 8px;
+  font-size: 12px;
+  color: var(--n-text-color-3, #888);
+}
+.album-progress-text { margin-left: 2px; }
+.thumb-cell {
+  position: relative;
+  width: 160px;
+  height: 200px;
+  overflow: hidden;
+  border-radius: 4px;
+}
+.thumb-skeleton {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    rgba(220, 220, 220, 0.6) 0%,
+    rgba(200, 200, 200, 0.9) 50%,
+    rgba(220, 220, 220, 0.6) 100%
+  );
+  background-size: 200% 100%;
+  animation: skeleton-shimmer 1.5s ease-in-out infinite;
+}
+@keyframes skeleton-shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
 }
 .status-row { display: flex; gap: 6px; flex-wrap: wrap; }
 .file-meta {

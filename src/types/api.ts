@@ -75,8 +75,9 @@ export interface MetadataPatch {
 
 export interface DetailImage {
   name: string
-  /// `data:image/{ext};base64,...` — directly usable in `<img src>`.
-  data_url: string
+  /// Path-only image URL — frontend prepends `useSettingsStore.apiBase`.
+  /// Bytes served by `GET /api/doujinshi/:id/images/:index`.
+  url: string
 }
 
 export interface DetailImagesResponse {
