@@ -74,11 +74,11 @@ const apiLines = computed(() => [
 </script>
 
 <template>
-  <div>
-    <div class="page-header">
+  <div class="page">
+    <header class="page-header">
       <h1>设置</h1>
-      <span class="count">运行时 + API</span>
-    </div>
+      <span class="count mono">运行时 + API</span>
+    </header>
   <n-spin :show="scanning">
     <n-space vertical size="large">
       <n-card title="路径">
@@ -185,9 +185,7 @@ const apiLines = computed(() => [
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  margin-bottom: var(--spacing-24);
-  padding-bottom: var(--spacing-16);
-  border-bottom: 1px solid var(--surface-border);
+  gap: var(--spacing-16);
 }
 .page-header h1 {
   font-size: var(--text-heading-sm);
@@ -196,7 +194,6 @@ const apiLines = computed(() => [
   letter-spacing: var(--tracking-body);
 }
 .page-header .count {
-  font-family: var(--font-mono);
   font-size: var(--text-caption);
   color: var(--color-smoke);
   letter-spacing: 0.1em;

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue"
 import {
-  NCard, NSpace, NButton, NTag, NSpin, NEmpty, NGrid, NGi, NImage, NDivider, useMessage,
+  NCard, NSpace, NButton, NTag, NSpin, NEmpty, NDivider, useMessage,
 } from "naive-ui"
 import { useRecycleStore, useSettingsStore } from "@/stores"
 import PermanentDeleteDialog from "@/components/PermanentDeleteDialog.vue"
@@ -72,11 +72,11 @@ function fmtSize(bytes: number): string {
 </script>
 
 <template>
-  <div>
-    <div class="page-header">
+  <div class="page">
+    <header class="page-header">
       <h1>回收站</h1>
-      <span class="count">{{ store.present.length + store.gone.length }} 条</span>
-    </div>
+      <span class="count mono">{{ store.present.length + store.gone.length }} 条</span>
+    </header>
   <n-spin :show="store.loading">
     <n-card title="待删除文件（仍在硬盘上）">
       <p style="color: #aaa; font-size: 12px">
@@ -87,39 +87,28 @@ function fmtSize(bytes: number): string {
     <n-empty
       v-if="!store.loading && store.present.length === 0"
       description="回收站为空。"
-      style="margin-top: 24px"
     />
 
-    <n-grid x-gap="12" y-gap="12" cols="6" style="margin-top: 16px">
-      <n-gi v-for="f in store.present" :key="f.id">
-        <n-card hoverable class="file-card">
-          <template #cover>
-            <n-image
-              v-if="f.cover_url"
-              :src="coverUrl(f)"
-              object-fit="cover"
-              style="width: 100%; height: 200px"
-              preview-disabled
-            />
-            <div v-else class="no-cover">暂无封面</div>
-          </template>
+    <div v-if="store.present.length > 0" class="card-grid">
+      <article v-for="f in store.present" :key="f.id" class="recycle-card">
+        <div class="recycle-cover">
+          <img v-if="f.cover_url" :src="coverUrl(f)" alt="" />
+          <div v-else class="no-cover">暂无封面</div>
+        </div>
+        <div class="recycle-body">
           <div class="title-line">
             <span class="title">{{ f.title }}</span>
           </div>
           <div class="meta">
             <span>{{ fmtSize(f.size_bytes) }}</span>
           </div>
-          <n-space size="small" style="margin-top: 8px">
-            <n-button size="tiny" type="primary" @click="askRestore(f)">
-              还原
-            </n-button>
-            <n-button size="tiny" type="error" @click="askDelete(f)">
-              永久删除
-            </n-button>
+          <n-space size="small" class="recycle-actions">
+            <n-button size="tiny" type="primary" @click="askRestore(f)">还原</n-button>
+            <n-button size="tiny" type="error" @click="askDelete(f)">永久删除</n-button>
           </n-space>
-        </n-card>
-      </n-gi>
-    </n-grid>
+        </div>
+      </article>
+    </div>
 
     <n-divider />
 
@@ -167,28 +156,81 @@ function fmtSize(bytes: number): string {
 </template>
 
 <style scoped>
-.file-card { width: 200px; }
+.page-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--spacing-16);
+}
+.page-header h1 {
+  font-size: var(--text-heading-sm);
+  font-weight: var(--font-weight-medium);
+  color: var(--color-snow);
+  letter-spacing: var(--tracking-body);
+}
+.page-header .count {
+  font-size: var(--text-caption);
+  color: var(--color-smoke);
+  letter-spacing: 0.1em;
+}
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+}
+.recycle-card {
+  background: var(--surface-card);
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-cards);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+.recycle-cover {
+  position: relative;
+  aspect-ratio: 3 / 4;
+  background: var(--color-obsidian-deep);
+  overflow: hidden;
+  border-bottom: 1px solid var(--surface-border);
+}
+.recycle-cover img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
 .no-cover {
   width: 100%;
-  height: 200px;
+  height: 100%;
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #888;
-  background: #222;
+  color: var(--color-smoke);
+  font-family: var(--font-mono);
+  font-size: var(--text-caption);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+.recycle-body {
+  padding: var(--spacing-16);
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-8);
 }
 .title-line { display: flex; align-items: center; gap: 6px; }
 .title {
   flex: 1;
+  color: var(--color-snow);
+  font-size: var(--text-body-sm);
+  font-weight: var(--font-weight-medium);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 .meta {
-  display: flex;
-  justify-content: space-between;
-  color: #aaa;
-  font-size: 12px;
-  margin-top: 4px;
+  color: var(--color-smoke);
+  font-size: var(--text-caption);
+  min-height: 16px;
 }
+.recycle-actions { margin-top: 4px; }
 </style>

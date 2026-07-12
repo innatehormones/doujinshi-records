@@ -25,5 +25,14 @@ a:hover { text-decoration: underline; }
 *::-webkit-scrollbar-thumb:hover { background: var(--color-slate); }
 ::selection { background: var(--color-midnight-emerald); color: var(--color-snow); }
 
-#app > .n-config-provider > .n-layout > .n-layout-scroll-container > aside { height: 100vh }
-#app > .n-config-provider > .n-layout > .n-layout-scroll-container > .n-layout-content { height: 100vh; overflow: visible; }
+/* Tauri WebView2: 隐藏默认滚动条样式（已通过 *::-webkit-scrollbar 覆盖）。*/
+
+/* 页面内容骨架：sider 之外的全宽区域，每个 view 用 .page 包裹，
+   由 --page-pad-x/y 决定内外留白节奏。垂直方向用 gap 撑开 section。 */
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-24);
+  padding: var(--page-pad-y) var(--page-pad-x);
+  min-height: 100%;
+}

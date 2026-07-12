@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, watch, computed } from "vue"
 import { useRouter } from "vue-router"
-import { NGrid, NGi, NSpace, NInput, NSelect, NSpin, NEmpty, NTag, useMessage } from "naive-ui"
+import { NSpace, NInput, NSelect, NSpin, NEmpty, NTag, useMessage } from "naive-ui"
 import { useLibraryStore, useSettingsStore, useRecycleStore } from "@/stores"
 import FileCard from "@/components/FileCard.vue"
 
@@ -32,6 +32,9 @@ const locationOptions = [
 ]
 
 const apiBase = computed(() => settings.apiBase)
+
+/// 当前页条数（store 没有 total 字段；后端 limit=50，列表分页未启用）。
+const totalLabel = computed(() => `${store.items.length} 条`)
 
 onMounted(async () => {
   await settings.load()
@@ -77,30 +80,39 @@ async function onCardPermanentDelete(id: number) {
 </script>
 
 <template>
-  <div>
-    <n-space style="margin-bottom: 16px" :wrap="true">
-      <n-input
-        :value="store.getQuery()"
-        @update:value="store.setQuery"
-        placeholder="搜索标题 / 社团 / 文件名"
-        clearable
-        style="width: 300px"
-      />
-      <n-select
-        v-model:value="store.status"
-        :options="statusOptions"
-        style="width: 140px"
-      />
-      <n-select
-        v-model:value="store.locationFilter"
-        :options="locationOptions"
-        style="width: 140px"
-      />
-    </n-space>
+  <div class="page">
+    <header class="page-header">
+      <div class="page-header-left">
+        <h1>我的同人志</h1>
+        <span class="count mono">{{ totalLabel }}</span>
+      </div>
+      <div class="page-header-right">
+        <n-input
+          :value="store.getQuery()"
+          @update:value="store.setQuery"
+          placeholder="搜索标题 / 社团 / 文件名"
+          clearable
+          size="medium"
+          class="search-input"
+        />
+        <n-select
+          v-model:value="store.status"
+          :options="statusOptions"
+          size="medium"
+          class="filter-select"
+        />
+        <n-select
+          v-model:value="store.locationFilter"
+          :options="locationOptions"
+          size="medium"
+          class="filter-select"
+        />
+      </div>
+    </header>
 
     <n-space
       v-if="store.topCircles.length > 0"
-      style="margin-bottom: 16px"
+      class="circle-chips"
       :wrap="true"
     >
       <n-tag
@@ -126,32 +138,42 @@ async function onCardPermanentDelete(id: number) {
         v-if="!store.loading && store.items.length === 0"
         description="还没有文件，把压缩包丢进 resources/doujinshi/ 即可。"
       />
-      <n-grid x-gap="12" y-gap="12" cols="6">
-        <n-gi v-for="f in store.items" :key="f.id">
-          <file-card
-            :file="f"
-            :api-base="apiBase"
-            @open="onCardOpen"
-            @viewed="store.markViewed"
-            @archive="onCardArchive"
-            @restore="onCardRestore"
-            @mark-delete="onCardMarkDelete"
-            @permanent-delete="onCardPermanentDelete"
-          />
-        </n-gi>
-      </n-grid>
+      <div v-else class="card-grid">
+        <file-card
+          v-for="f in store.items"
+          :key="f.id"
+          :file="f"
+          :api-base="apiBase"
+          @open="onCardOpen"
+          @viewed="store.markViewed"
+          @archive="onCardArchive"
+          @restore="onCardRestore"
+          @mark-delete="onCardMarkDelete"
+          @permanent-delete="onCardPermanentDelete"
+        />
+      </div>
     </n-spin>
   </div>
 </template>
 
 <style scoped>
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-24);
+  padding: var(--page-pad-y) var(--page-pad-x);
+}
 .page-header {
   display: flex;
-  align-items: baseline;
+  align-items: center;
   justify-content: space-between;
-  margin-bottom: var(--spacing-24);
-  padding-bottom: var(--spacing-16);
-  border-bottom: 1px solid var(--surface-border);
+  gap: var(--spacing-24);
+  flex-wrap: wrap;
+}
+.page-header-left {
+  display: flex;
+  align-items: baseline;
+  gap: var(--spacing-16);
 }
 .page-header h1 {
   font-size: var(--text-heading-sm);
@@ -160,9 +182,29 @@ async function onCardPermanentDelete(id: number) {
   letter-spacing: var(--tracking-body);
 }
 .page-header .count {
-  font-family: var(--font-mono);
   font-size: var(--text-caption);
   color: var(--color-smoke);
   letter-spacing: 0.1em;
+}
+.page-header-right {
+  display: flex;
+  align-items: center;
+  gap: var(--spacing-8);
+  flex-wrap: wrap;
+}
+.search-input {
+  width: 280px;
+  max-width: 100%;
+}
+.filter-select {
+  width: 140px;
+}
+.circle-chips {
+  margin-top: -8px;
+}
+.card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
 }
 </style>

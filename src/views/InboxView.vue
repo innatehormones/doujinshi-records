@@ -55,11 +55,11 @@ function rarErrorTitle(kind: RarError["kind"]): string {
 </script>
 
 <template>
-  <div>
-    <div class="page-header">
+  <div class="page">
+    <header class="page-header">
       <h1>待识别</h1>
-      <span class="count">{{ store.conflicts.length }} 个待处理</span>
-    </div>
+      <span class="count mono">{{ store.conflicts.length }} 个待处理</span>
+    </header>
     <n-card title="待识别 · 文件名冲突">
       <p style="color: #aaa">
         文件名与已识别库内文件相同的压缩包会停在这里。点「跳过」让新文件留在 inbox 不动，或点「内容比对」做内容级决策。
@@ -194,9 +194,7 @@ function rarErrorTitle(kind: RarError["kind"]): string {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  margin-bottom: var(--spacing-24);
-  padding-bottom: var(--spacing-16);
-  border-bottom: 1px solid var(--surface-border);
+  gap: var(--spacing-16);
 }
 .page-header h1 {
   font-size: var(--text-heading-sm);
@@ -205,7 +203,6 @@ function rarErrorTitle(kind: RarError["kind"]): string {
   letter-spacing: var(--tracking-body);
 }
 .page-header .count {
-  font-family: var(--font-mono);
   font-size: var(--text-caption);
   color: var(--color-smoke);
   letter-spacing: 0.1em;

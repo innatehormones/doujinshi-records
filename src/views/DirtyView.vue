@@ -23,11 +23,11 @@ function dirLabel(dir: string): string {
 </script>
 
 <template>
-  <div>
-    <div class="page-header">
+  <div class="page">
+    <header class="page-header">
       <h1>脏数据</h1>
-      <span class="count">{{ store.entries.length }} 条</span>
-    </div>
+      <span class="count mono">{{ store.entries.length }} 条</span>
+    </header>
     <p style="color: #aaa; margin-bottom: 16px">
       启动扫描发现：这些文件位于已入库 / 回收站 / 归档目录，但数据库无对应行。
       V3 不提供自动处理——手动清理或重新入库。
@@ -67,9 +67,7 @@ function dirLabel(dir: string): string {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  margin-bottom: var(--spacing-24);
-  padding-bottom: var(--spacing-16);
-  border-bottom: 1px solid var(--surface-border);
+  gap: var(--spacing-16);
 }
 .page-header h1 {
   font-size: var(--text-heading-sm);
@@ -78,7 +76,6 @@ function dirLabel(dir: string): string {
   letter-spacing: var(--tracking-body);
 }
 .page-header .count {
-  font-family: var(--font-mono);
   font-size: var(--text-caption);
   color: var(--color-smoke);
   letter-spacing: 0.1em;

@@ -43,11 +43,11 @@ async function act(action: ConflictActionType) {
 </script>
 
 <template>
-  <div>
-    <div class="page-header">
+  <div class="page">
+    <header class="page-header">
       <h1>冲突对比</h1>
-      <span class="count">conflict #{{ conflictId }}</span>
-    </div>
+      <span class="count mono">conflict #{{ conflictId }}</span>
+    </header>
 
     <n-spin :show="loading || acting">
       <n-empty
@@ -141,9 +141,7 @@ async function act(action: ConflictActionType) {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
-  margin-bottom: var(--spacing-24);
-  padding-bottom: var(--spacing-16);
-  border-bottom: 1px solid var(--surface-border);
+  gap: var(--spacing-16);
 }
 .page-header h1 {
   font-size: var(--text-heading-sm);
@@ -152,14 +150,13 @@ async function act(action: ConflictActionType) {
   letter-spacing: var(--tracking-body);
 }
 .page-header .count {
-  font-family: var(--font-mono);
   font-size: var(--text-caption);
   color: var(--color-smoke);
   letter-spacing: 0.1em;
 }
 .compare-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  grid-template-columns: repeat(auto-fit, minmax(420px, 1fr));
   gap: 16px;
 }
 .cover-row {

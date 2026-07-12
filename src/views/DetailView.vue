@@ -197,11 +197,12 @@ function locationLabel(): string {
 </script>
 
 <template>
-  <div>
-    <div class="page-header">
+  <div class="page">
+    <header class="page-header">
       <n-button text @click="router.back()">← 返回</n-button>
       <h1>{{ file?.title ?? `文件 #${id}` }}</h1>
-    </div>
+      <span v-if="file" class="count mono">id {{ file.id }}</span>
+    </header>
     <n-spin :show="loading || saving">
       <div v-if="file" class="detail-grid">
         <n-card title="图片预览" class="preview-pane">
@@ -309,13 +310,16 @@ function locationLabel(): string {
 </template>
 
 <style scoped>
+.page {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-24);
+  padding: var(--page-pad-y) var(--page-pad-x);
+}
 .page-header {
   display: flex;
   align-items: baseline;
-  gap: 16px;
-  margin-bottom: var(--spacing-24);
-  padding-bottom: var(--spacing-16);
-  border-bottom: 1px solid var(--surface-border);
+  gap: var(--spacing-16);
 }
 .page-header h1 {
   font-size: var(--text-heading-sm);
@@ -323,18 +327,41 @@ function locationLabel(): string {
   color: var(--color-snow);
   letter-spacing: var(--tracking-body);
 }
+.page-header .count {
+  font-size: var(--text-caption);
+  color: var(--color-smoke);
+  letter-spacing: 0.1em;
+}
 .detail-grid {
   display: grid;
-  grid-template-columns: 3fr 2fr;
-  grid-template-rows: auto auto;
   gap: 16px;
+  grid-template-columns: minmax(0, 1fr) 320px;
+  grid-template-rows: auto auto;
+  grid-template-areas:
+    "preview meta"
+    "preview action";
 }
-.preview-pane { grid-row: span 2; }
+.preview-pane { grid-area: preview; min-width: 0; }
+.meta-pane    { grid-area: meta; }
+.action-pane  { grid-area: action; }
+@media (max-width: 1100px) {
+  .detail-grid {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto auto auto;
+    grid-template-areas:
+      "preview"
+      "meta"
+      "action";
+  }
+}
 .album-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 8px;
-  max-height: 75vh;
+  /* 详情页是单页内容，预览 grid 占满主区可视高度，溢出滚动而非占满屏。
+     calc 100vh 减去 header+padding+card title 高度：避免在大窗口下被切到底。 */
+  max-height: calc(100vh - 200px);
+  min-height: 0;
   overflow-y: auto;
   padding: 4px;
 }
@@ -342,16 +369,16 @@ function locationLabel(): string {
    onLoad 切 .thumb-img-loaded 才淡入——避免"灰→黑→图"三段闪烁。 */
 .thumb-cell {
   position: relative;
-  width: 160px;
-  height: 200px;
+  width: 100%;
+  aspect-ratio: 4 / 5;
   overflow: hidden;
   border-radius: 4px;
-  background: var(--surface-muted, transparent);
+  background: var(--color-obsidian-deep);
   cursor: zoom-in;
 }
 .thumb-img {
-  width: 160px;
-  height: 200px;
+  width: 100%;
+  height: 100%;
   object-fit: cover;
   display: block;
   position: absolute;

@@ -13,6 +13,8 @@
   --color-ash: #242424;
   --color-obsidian: #121212;
   --color-obsidian-deep: #0d0d0d;
+  --color-ember-orange: #d97706;
+  --color-ember-red: #d03050;
 
   --surface-canvas: var(--color-obsidian);
   --surface-card: var(--color-obsidian);
@@ -56,6 +58,11 @@
   --radius-buttons: 9999px;
 
   --shadow-sm: 0 4px 6px -1px rgba(0, 0, 0, 0.10), 0 2px 4px -2px rgba(0, 0, 0, 0.10);
-  --page-max-width: 1200px;
-  --card-padding: 24px;
+
+  /* 页面内容 padding：sider 之外全宽布局的内外留白节奏 */
+  --page-pad-x: 32px;
+  --page-pad-y: 24px;
+  --page-header-h: 56px;
+
+  --card-padding: 20px;
 }
