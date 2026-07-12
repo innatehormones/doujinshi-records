@@ -1,23 +1,28 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from "vue"
+/// DetailView：列表（Library）/回收站点进来的详情页。
+///
+/// 缩略图渲染管线见 `composables/useThumbnailPipeline.ts`：
+/// - IntersectionObserver 触发 `pipeline.request(index)`，仅调度可见 cell
+/// - 已缓存：直挂后端图（命中 webp，未命中走原图 mime）
+/// - 未缓存：Worker 转 800px webp → PUT 落 LRU → blob URL 展示
+///
+/// 缩略图视觉防闪烁见 CSS：骨架 div 永远在底层，`<img>` `opacity:0` 挂载
+/// 到 onLoad 期间不可见，onLoad 后切 `.thumb-img-loaded` 淡入。
+
+import { ref, onMounted, onUnmounted, computed, watch } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import {
-  NCard, NSpace, NButton, NSpin, NImage, NInput, NSelect, NEmpty, NAlert, useMessage,
+  NCard, NSpace, NButton, NSpin, NInput, NSelect, NEmpty, NAlert, useMessage,
 } from "naive-ui"
 import { useLibraryStore, useSettingsStore } from "@/stores"
 import { api } from "@/api/tauri"
-import { putImageThumb } from "@/api/http"
 import type { FileSummary, MetadataPatch, DetailImage } from "@/types/api"
+import FullscreenPreview from "@/components/FullscreenPreview.vue"
+import { useThumbnailPipeline } from "@/composables/useThumbnailPipeline"
+import { usePreviewState } from "@/composables/usePreviewState"
 
-const PREVIEW_MAX_EDGE = 1000
-const THUMB_UPLOAD_CONCURRENCY = 1
-
-type ThumbJob = {
-  img: DetailImage
-  index: number
-  el: HTMLImageElement
-  fileId: number
-}
+/// IntersectionObserver 预读上下各 ~2 行（grid item 高度 200px + gap 8px）。
+const IO_ROOT_MARGIN = "420px 0px"
 
 const route = useRoute()
 const router = useRouter()
@@ -25,112 +30,51 @@ const store = useLibraryStore()
 const settings = useSettingsStore()
 const message = useMessage()
 
-// 每张图的加载状态。img-props 的 onLoad/onError 触发 set 更新。
-const loadedSet = ref(new Set<string>())
-const failedSet = ref(new Set<string>())
-const thumbUploadedSet = ref(new Set<string>())
-const thumbQueue: ThumbJob[] = []
-let activeThumbJobs = 0
-const loadedCount = computed(() => loadedSet.value.size)
-function markLoaded(name: string) {
-  if (loadedSet.value.has(name)) return
-  const next = new Set(loadedSet.value)
-  next.add(name)
-  loadedSet.value = next
-}
-function markFailed(name: string) {
-  if (failedSet.value.has(name)) return
-  const next = new Set(failedSet.value)
-  next.add(name)
-  failedSet.value = next
-}
-function handleImageLoad(img: DetailImage, index: number, event: Event) {
-  markLoaded(img.name)
-  const el = event.target
-  if (!(el instanceof HTMLImageElement)) return
-  enqueueThumb(img, index, el)
-}
-function enqueueThumb(img: DetailImage, index: number, el: HTMLImageElement) {
-  if (img.thumb_cached) return
-  const fileId = id.value
-  const key = `${fileId}:${img.url}`
-  if (thumbUploadedSet.value.has(key)) return
-  const next = new Set(thumbUploadedSet.value)
-  next.add(key)
-  thumbUploadedSet.value = next
-  thumbQueue.push({ img, index, el, fileId })
-  drainThumbQueue()
-}
-function drainThumbQueue() {
-  while (activeThumbJobs < THUMB_UPLOAD_CONCURRENCY && thumbQueue.length > 0) {
-    const job = thumbQueue.shift()
-    if (!job) return
-    activeThumbJobs += 1
-    void runThumbJob(job)
-  }
-}
-function waitForIdle(): Promise<void> {
-  return new Promise((resolve) => {
-    if ("requestIdleCallback" in window) {
-      window.requestIdleCallback(() => resolve(), { timeout: 1000 })
-      return
-    }
-    globalThis.setTimeout(resolve, 32)
-  })
-}
-async function runThumbJob(job: ThumbJob) {
-  try {
-    if (job.fileId !== id.value) return
-    await waitForIdle()
-    if (job.fileId !== id.value) return
-    await uploadThumb(job)
-  } catch (e) {
-    console.warn("thumbnail conversion failed", e)
-  } finally {
-    activeThumbJobs -= 1
-    drainThumbQueue()
-  }
-}
-async function uploadThumb(job: ThumbJob) {
-  const { index, el, fileId } = job
-  if (!el.naturalWidth || !el.naturalHeight) return
-  if (el.naturalWidth <= PREVIEW_MAX_EDGE && el.naturalHeight <= PREVIEW_MAX_EDGE) return
-
-  const scale = Math.min(PREVIEW_MAX_EDGE / el.naturalWidth, PREVIEW_MAX_EDGE / el.naturalHeight)
-  const width = Math.max(1, Math.round(el.naturalWidth * scale))
-  const height = Math.max(1, Math.round(el.naturalHeight * scale))
-  const canvas = document.createElement("canvas")
-  canvas.width = width
-  canvas.height = height
-  const ctx = canvas.getContext("2d")
-  if (!ctx) return
-  ctx.drawImage(el, 0, 0, width, height)
-  const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, "image/webp", 0.7))
-  if (!blob || blob.type !== "image/webp" || fileId !== id.value) return
-  const resp = await putImageThumb(fileId, index, blob)
-  if (!resp.ok) {
-    console.warn("thumbnail upload failed", resp.status, await resp.text())
-    return
-  }
-  if (images.value[index]?.url === job.img.url) {
-    images.value[index].thumb_cached = true
-  }
-}
-// 切换文件时清空进度状态（watch 声明放在 images 之后，避免 TDZ）。
 const id = computed(() => Number(route.params.id))
 const file = ref<FileSummary | null>(null)
 const images = ref<DetailImage[]>([])
 const zipMissing = ref(false)
 const loading = ref(false)
 const saving = ref(false)
-watch(images, () => {
-  loadedSet.value = new Set()
-  failedSet.value = new Set()
-  thumbUploadedSet.value = new Set()
-  thumbQueue.length = 0
+
+const pipeline = useThumbnailPipeline({
+  fileId: id,
+  apiBase: computed(() => settings.apiBase),
+  images,
+})
+const preview = usePreviewState()
+
+/// ---- IntersectionObserver：cell 进入视口才 request ----
+const observers = new Map<number, IntersectionObserver>()
+
+function attachObserver(cell: HTMLElement | null, index: number) {
+  if (!cell) return
+  const prev = observers.get(index)
+  if (prev) prev.disconnect()
+  const io = new IntersectionObserver(
+    (entries) => {
+      for (const e of entries) {
+        if (e.isIntersecting) pipeline.request(index)
+      }
+    },
+    { rootMargin: IO_ROOT_MARGIN, threshold: 0.01 },
+  )
+  io.observe(cell)
+  observers.set(index, io)
+}
+
+function detachAllObservers() {
+  for (const io of observers.values()) io.disconnect()
+  observers.clear()
+}
+
+/// 切走文件：detach 所有 observer，下一波由新 images 触发的 template ref 重建。
+watch(id, () => {
+  detachAllObservers()
+  load()
 })
 
-// 编辑表单（编辑后保存通过 store.updateMetadataFor → PATCH）
+/// ---- 元数据编辑表单（保存走 store.updateMetadataFor → PATCH） ----
 const editTitle = ref("")
 const editCircle = ref("")
 const editSeries = ref("")
@@ -157,7 +101,7 @@ async function load() {
     file.value = f
     editTitle.value = f.title
     editCircle.value = f.circle ?? ""
-    // 这些字段不在 FileSummary 里（保留为本地态，等保存后下次进页面再拉新值）
+    /// 这些字段不在 FileSummary 里（保留为本地态，等保存后下次进页面再拉新值）
     editSeries.value = ""
     editTranslator.value = ""
     editVersion.value = ""
@@ -174,7 +118,7 @@ async function load() {
 }
 
 onMounted(load)
-watch(id, load)
+onUnmounted(detachAllObservers)
 
 async function save() {
   saving.value = true
@@ -272,39 +216,23 @@ function locationLabel(): string {
             description="zip 内无图片"
           />
           <div v-else class="album-grid">
-            <div class="album-progress">
-              <n-progress
-                type="line"
-                :percentage="images.length === 0 ? 0 : Math.round((loadedCount * 100) / images.length)"
-                :show-indicator="false"
-                :height="6"
-                style="margin-bottom: 6px;"
-              />
-              <span class="album-progress-text">
-                已加载 {{ loadedCount }} / {{ images.length }}
-                <template v-if="failedSet.size > 0">· 失败 {{ failedSet.size }}</template>
-              </span>
-            </div>
-            <div v-for="(img, idx) in images" :key="img.name" class="thumb-cell">
-              <div
-                v-if="!loadedSet.has(img.name) && !failedSet.has(img.name)"
-                class="thumb-skeleton"
-              />
-              <n-image
-                :src="settings.apiBase + img.url"
+            <div
+              v-for="(img, idx) in images"
+              :key="img.name"
+              :ref="(el) => attachObserver(el as HTMLElement | null, idx)"
+              class="thumb-cell"
+              @click="preview.show(idx)"
+            >
+              <div class="thumb-skeleton" />
+              <img
+                v-if="pipeline.thumbSrc.value[idx]"
+                :src="pipeline.thumbSrc.value[idx]!"
                 :alt="img.name"
-                width="160"
-                height="200"
-                object-fit="cover"
-                show-toolbar
-                :img-props="{
-                  style: 'cursor: zoom-in; width: 160px; height: 200px; object-fit: cover; display: block;',
-                  loading: 'lazy',
-                  crossorigin: 'anonymous',
-                  onLoad: (event: Event) => { void handleImageLoad(img, idx, event) },
-                  onError: () => markFailed(img.name),
-                }"
-                class="album-thumb"
+                class="thumb-img"
+                :class="{ 'thumb-img-loaded': pipeline.loaded.value.has(idx) }"
+                loading="lazy"
+                decoding="async"
+                @load="pipeline.markLoaded(idx)"
               />
             </div>
           </div>
@@ -367,6 +295,16 @@ function locationLabel(): string {
         </n-card>
       </div>
     </n-spin>
+
+    <FullscreenPreview
+      v-if="preview.open.value"
+      :file-id="id"
+      :images="images"
+      :initial-index="preview.index.value"
+      :api-base="settings.apiBase"
+      @close="preview.close()"
+      @change="preview.setIndex"
+    />
   </div>
 </template>
 
@@ -400,25 +338,28 @@ function locationLabel(): string {
   overflow-y: auto;
   padding: 4px;
 }
-.album-thumb {
-  border-radius: 4px;
-  overflow: hidden;
-  background: var(--surface-muted, transparent);
-}
-.album-progress {
-  grid-column: 1 / -1;
-  margin-bottom: 8px;
-  font-size: 12px;
-  color: var(--n-text-color-3, #888);
-}
-.album-progress-text { margin-left: 2px; }
+/* 缩略图 cell：骨架永远占底，<img> 覆盖在骨架上解码期间 opacity:0，
+   onLoad 切 .thumb-img-loaded 才淡入——避免"灰→黑→图"三段闪烁。 */
 .thumb-cell {
   position: relative;
   width: 160px;
   height: 200px;
   overflow: hidden;
   border-radius: 4px;
+  background: var(--surface-muted, transparent);
+  cursor: zoom-in;
 }
+.thumb-img {
+  width: 160px;
+  height: 200px;
+  object-fit: cover;
+  display: block;
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  transition: opacity 0.18s ease-out;
+}
+.thumb-img-loaded { opacity: 1; }
 .thumb-skeleton {
   position: absolute;
   inset: 0;
