@@ -70,9 +70,11 @@ pnpm exec vue-tsc --noEmit
 doujinshi-records/
 ├── src/                        # Vue 3 前端
 │   ├── views/                  # 6 个页面：Library / Detail / Inbox / Conflict / RecycleBin / Dirty / Settings
-│   ├── components/             # 通用组件（FileCard 等）
+│   ├── components/             # 通用组件（FileCard / PermanentDeleteDialog / RestoreDialog / FullscreenPreview）
+│   ├── composables/            # useThumbnailPipeline（Worker 调度）/ usePreviewState（全屏预览状态）
 │   ├── stores/index.ts         # Pinia 状态：library / recycle / inbox / dirty / settings
 │   ├── api/tauri.ts            # Tauri invoke 封装（与后端命令一一对应）
+│   ├── workers/previewThumb.worker.ts  # OffscreenCanvas 转码 Worker（详情页未缓存图→800px webp）
 │   ├── types/api.ts            # 前后端共享类型定义（含 current_location / has_physical_file / DirtyEntry）
 │   └── router.ts               # 7 个路由
 ├── src-tauri/
@@ -95,7 +97,7 @@ doujinshi-records/
 │   ├── doujinshi-will-delete/  # 待删除
 │   ├── doujinshi-archived/     # 归档
 │   ├── covers/                 # 提取的封面（~100 KB WebP）
-│   ├── _preview_cache/         # HTTP images 响应体 LRU 缓存（disk-backed，gzip 自动）
+│   ├── _preview_cache/         # 单图 webp LRU 缓存（disk-backed，<id>-<idx>.webp）
 │   └── data.db                 # SQLite
 ├── docs/superpowers/           # 设计 spec + 实施 plan
 └── .claude/                    # 本项目的 CodeGraph 指令（已配置）
@@ -145,8 +147,8 @@ Pinia store 持有列表数据，监听 `library-updated` 事件刷新 5 个 sto
 `http::build_router` 在独立 `std::thread` + `current_thread` tokio runtime 启动 Axum，**不**依赖 Tauri 占用的 `#[tokio::main]` 运行时（避免 starvation）。首次启动绑定 `api_port` 设置中保留的端口，被占用则回退到 `127.0.0.1:0`，实际端口持久化到 `app_setting` 表供下次优先使用。CORS 全开；除 `/api/health` 与 `/api/covers/*` 外全部路由走 Bearer token 鉴权。
 
 端点清单：
-- 查询：`/api/health`、`/api/doujinshi/search`、`/api/doujinshi/by-hash/<hash>`、`/api/doujinshi/check?hash=`、`/api/doujinshi/<id>`、`/api/doujinshi/<id>/images`
-- 写操作：`/api/doujinshi/<id>/viewed` / `/archive` / `/restore`、`/api/conflicts/<id>/compare`
+- 查询：`/api/health`、`/api/doujinshi/search`、`/api/doujinshi/by-hash/<hash>`、`/api/doujinshi/check?hash=`、`/api/doujinshi/<id>`、`/api/doujinshi/<id>/images`、`/api/doujinshi/<id>/images/<idx>`
+- 写操作：`/api/doujinshi/<id>/viewed` / `/archive` / `/restore`、`/api/doujinshi/<id>/images/<idx>/thumb`（PUT 落 webp）、`/api/conflicts/<id>/compare`
 - 资源：`/api/covers/<file_id>` / `/api/covers/by-hash/<hash>`（两者鉴权豁免，浏览器 `<img>` 直读）
 - 元数据：`/api/dirty` 列出孤儿文件
 
@@ -185,4 +187,4 @@ Pinia store 持有列表数据，监听 `library-updated` 事件刷新 5 个 sto
 - HTTP 端口是 OS 随机分配，**不**固定；前端 `useSettingsStore` 是唯一权威来源。
 - 文件状态转移一律走 `state_machine::transition_with_dirs`，不要在外层 command 拼装 file-rename 逻辑。
 - 封面输出是 webp（lossless），由 `cover_format::encode_webp` 负责；HTTP 路由的 Content-Type 仍是 `image/jpeg` 因为现有 jpg 历史封面也走该路径，浏览器对 jpg 解析正常。
-- **`/api/doujinshi/:id/images` 走 LRU preview cache**：磁盘 `_preview_cache/<id>-<mtime>.json` + 内存 `lru::LruCache`，cache key `(file_id, zip_mtime)` 自动随 zip 改动失效；HTTP ETag = `"{id}-{mtime_unix}"` 触发 304 短路。后台 30s GC 兜底压回 80% waterline。Handler 写盘用 `tokio::spawn` fire-and-forget，命中优先。
+- **`/api/doujinshi/:id/images` 走 LRU preview cache**：磁盘 `_preview_cache/<id>-<idx>.webp` + 内存 `lru::LruCache`，cache key `(file_id, image_index)` 单图粒度；HTTP ETag = `"{id}-{mtime_unix}"` 触发 304 短路（响应体本身）。`/images` 端点响应 `Cache-Control: no-store` 因为 `thumb_cached` 字段依赖磁盘文件存在与否是运行时状态。后台 30s GC 兜底压回 80% waterline。`thumb_cached` 计算用 `contains OR is_on_disk`——LRU miss 但磁盘有文件（eviction 删盘失败 / 启动 reload 失败等）也算 hit，前端据此跳过 Worker。

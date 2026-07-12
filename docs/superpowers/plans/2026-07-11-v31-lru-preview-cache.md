@@ -1,5 +1,7 @@
 # V3.1 Implementation Plan — LRU Preview Cache
 
+> **状态**：已实现，但实施过程中大幅偏离原 plan。原始 plan 是给 `/images` 端点的响应体加 `(file_id, mtime)` 缓存；落地后改成 per-image `(file_id, image_index)` 单图 webp 缓存 + Worker 流水线 + 懒加载 + 全屏预览。实际架构与现状以 spec [`2026-07-11-v31-lru-preview-cache.md`](../specs/2026-07-11-v31-lru-preview-cache.md) 为准。本文件保留作历史档案。
+>
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** 给 `GET /api/doujinshi/<id>/images` 加响应体 LRU 缓存，磁盘长缓存 + 内存 LRU 索引，HTTP ETag 304 路径。

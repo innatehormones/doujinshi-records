@@ -1,194 +1,195 @@
-# V3.1 Spec — LRU Preview Cache（HTTP images 端点响应体缓存）
+# V3.1 Spec — Preview Cache + Lazy Gallery + Fullscreen Preview
 
-> 日期：2026-07-11
-> 状态：draft（待用户 review）
-> 范围：**V3.1 第一步**——给 `GET /api/doujinshi/<id>/images` 加 LRU 磁盘 + 内存缓存
-> 后续：V3.1 第二步是 gallery-style detail page，复用本 spec 的 cache 层做预加载
+> 日期：2026-07-11（初稿）→ 2026-07-12（落地修订）
+> 状态：已实现
+> 范围：详情页（DetailView）从一次性渲染 200+ 张原图改成"按需取 + Worker 转码 + LRU 缓存 + 全屏预览"
 
 ## 目标
 
-V3 详情页打开一本 zip（如 200 页同人志）调用 `GET /api/doujinshi/<id>/images`，每次都重新解压 + base64 编码 ~200 张图，单次 50–200 ms；同一本 zip 在 session 内重复浏览累计耗时可见。V3.1 解决：
+V3 详情页打开一本 zip（如 200 页同人志）一次性挂载 200+ 个 `<n-image>`，WebView2 并行解码原图 + n-image 内部 wrapper 直接拖垮 UI；同本 zip 重复打开累计耗时可观。V3.1 解决：
 
-1. **响应体级缓存**——同一 zip 的 images 响应整体复用，不重复解压
-2. **磁盘长缓存**——重启后不丢，下次打开秒级
-3. **磁盘占空可控**——上限 200 MB（可调），LRU 自动 evict
-4. **HTTP 友好**——配 ETag，让浏览器扩展能少传一次
+1. **按需取**——cell 进入视口才发请求；不可见不加载
+2. **后端转 webp 缓存**——Worker 缩 800px webp → PUT 落 LRU；二次进入直接读 webp
+3. **磁盘长缓存**——LRU 200 MiB 上限，重启不丢
+4. **LRU/磁盘一致性**——`/images` 端点的 `thumb_cached` 字段以"磁盘有文件"为最终依据，不只看内存 LRU
+5. **全屏预览**——自封装，不放大、不取原图，键盘 ← → Esc 翻页关闭
 
 ## 非目标
 
-- **gallery-style detail page**——V3.1 第二步；后端 cache 准备好前端不动
-- **图片解码缩略图级缓存**——单个图片的 pre-resized 缩略图；本 spec 只缓存整个 images 响应
 - **跨设备/跨进程缓存共享**——单进程 LRU，多进程同目录不会自动协调
-- **缓存预热**——用户首次打开才解压进 cache；不主动后台跑
+- **缓存预热**——用户首次进入才生成缩略图；不主动后台跑
+- **放大查看原图**——预览只展示 ≤800px webp，不再请求 `/original` 路由（路由已删）
 
 ## 核心模型
 
 ### 缓存 key
 
-`(i64 file_id, SystemTime zip_mtime_unix)`
+`(i64 file_id, usize image_index)`
 
-- `file_id` 定位 doujinshi_file 行（与 zip 路径一一对应，状态转移由 state_machine 维护）
-- `mtime` 兜底：用户手工替换 zip、移动后可能同名但 mtime 不同；mtime 一变 → 自动重建
-- 不存 zip 内容 hash，避免每次缓存查找多读一遭 zip
+- `file_id` 定位 doujinshi_file 行；zip 重识别换 file_id 即自动失效
+- `image_index` 索引 zip 内图片（0-based）
+- 文件命名 `<id>-<idx>.webp` 让 `reload_from_disk` 能反查 key 重建内存 LRU
+- 不存 zip mtime：单个图片变更不影响其它图片
 
 ### 缓存值
 
-序列化后的 `ImagesResponse` JSON（与现在的端点返回同 schema）：
-
-```
-CacheEntry {
-  key: (i64, SystemTime),
-  body: Bytes,           // serde_json::to_vec(&ImagesResponse)
-  size: u64,             // body.len()
-  last_accessed: Instant,
-}
-```
-
-只缓存解码后的 JSON，原始 zip 数据不持久化（避免缓存体积膨胀）。
+`Vec<u8>`——单图转码后的 webp bytes（≤800px q=0.7，约 30–150 KB/张）
 
 ### 失效
 
-- 自动失效：cache key 中的 `mtime` 与磁盘 zip `metadata().modified()` 不一致 → 算 miss，重建
-- 不需要主动调 invalidation：state_machine 转移文件时会改 mtime（文件被 rename，OS 给新 inode，新 mtime）
-- LRU 容量超限时 evict 最久未访问
+- **重启**：`PreviewCache::new` 扫盘 → `reload_from_disk` 重建 LRU；损坏文件自动删除
+- **Eviction**：`bytes_in_cache > max_bytes * 80%` 时 LRU 弹出 + 删磁盘文件
+- **状态机转移**：`state_machine::transition_with_dirs` 后调用 `preview_cache.invalidate(id)`（rename 后该 id 旧图片可能不存在）
+- **API 路径**：`/api/doujinshi/:id/images/:index/thumb`（PUT）幂等——已存在 key 时直接 NO_CONTENT 不覆盖（避免重 PUT 浪费 worker）
 
 ## 架构
 
-### 模块
+### 后端模块
 
-`src-tauri/src/services/preview_cache.rs`（新文件）
+`src-tauri/src/services/preview_cache.rs`
 
 ```
 pub struct PreviewCache {
   inner: Mutex<LruCache<CacheKey, CacheEntry>>,
-  max_bytes: AtomicU64,         // 默认 200 * 1024 * 1024
+  max_bytes: AtomicU64,           // 默认 200 * 1024 * 1024
   bytes_in_cache: AtomicU64,
-  dir: PathBuf,                // _preview_cache/
+  dir: PathBuf,                  // resources/_preview_cache/
 }
 
 impl PreviewCache {
-  pub fn new(dir: PathBuf, max_bytes: u64) -> Self
-  pub async fn get_or_compute<F>(&self, key: CacheKey, compute: F) -> Result<Bytes>
-    where F: FnOnce() -> Result<Bytes>
-  pub fn peek(&self, key: &CacheKey) -> Option<&CacheEntry>
+  pub fn new(dir: &Path, max_bytes: u64) -> Result<Self>
+  pub fn contains(&self, key: &CacheKey) -> bool         // 仅内存 LRU
+  pub fn is_on_disk(&self, key: &CacheKey) -> bool       // 磁盘兜底
+  pub fn get(&self, key: &CacheKey) -> Option<Vec<u8>>
+  pub async fn insert(&self, key: CacheKey, body: Vec<u8>) -> Result<()>
+  pub async fn gc(&self) -> Result<()>                   // 后台任务兜底
   pub fn invalidate(&self, id: i64)
-  pub async fn gc(&self) -> Result<()>   // drain to 80% of max_bytes
-  pub fn on_disk_total(&self) -> u64
 }
 ```
 
-`AppState` 持 `Arc<PreviewCache>`；构造函数从 `cfg.preview_cache_dir()` + 默认 200 MB 初始化。
+`ApiState.preview_cache: Arc<PreviewCache>`；lib.rs 启动时 `PreviewCache::new(&cfg.preview_cache_dir(), cfg.preview_cache_max_bytes)`，每 30s 跑一次 `gc()`。
 
-### 启动时构建内存 LRU
+### HTTP 路由
 
-`PreviewCache::new` 阶段：
+| 路由 | 行为 |
+|---|---|
+| `GET /api/doujinshi/:id/images` | 列表。每项含 `thumb_cached = contains OR is_on_disk`；`Cache-Control: no-store` |
+| `GET /api/doujinshi/:id/images/:index` | 单图。cache hit 吐 webp；miss 走 `raw_image_response` 直返原图（mime 按 magic bytes 探测）|
+| `PUT /api/doujinshi/:id/images/:index/thumb` | 落盘。body 必须是 webp；空体 400；非 webp 400；LRU 已存在 → NO_CONTENT 幂等 |
 
-1. 确保 `_preview_cache/` 目录存在
-2. Walk 该目录：每个 `<file_id>-<mtime>.json` 文件 parse 文件名拿到 key
-3. stat 文件得 size；读 body 入内存 LRU
-4. 跳过损坏文件（parse 失败 → 删除磁盘文件）
+### `is_on_disk` 的必要性
 
-启动 GC 不主动跑——只是把磁盘文件读进 LRU map，磁盘 inode + 文件 size 已是最权威账本；超限 evict 等下次插入或后台任务触发。
-
-### HTTP 层接入
-
-`GET /api/doujinshi/<id>/images` 改写：
-
-```
-handler(id):
-  row = SELECT * FROM doujinshi_file WHERE id = ?
-  if !row: 404
-  zip_path = row.current_path
-  if !zip_path.exists():
-    return 200 { images: [], zip_missing: true }
-  
-  mtime = zip_path.metadata().modified()?
-  etag = format!("\"{id}-{}\"", mtime_unix)
-  
-  if request.if_none_match == etag:
-    return 304 Not Modified（空 body + 仍带 ETag header）
-  
-  key = (id, mtime)
-  if let Some(entry) = cache.peek(&key):
-    response: 200 + ETag header + entry.body bytes
-  else:
-    images = list_images(zip_path)?   // 现有 archive::list_images
-    body = serde_json::to_vec(&ImagesResponse { id, images, zip_missing: false })
-    cache.get_or_compute(key, || Ok(body))  // 触发 disk write + LRU insert
-    return 200 + ETag header + body
-```
-
-`/api/covers/*` 路径不改（本 spec 只动 images 端点）。
+`/images` 端点只查 `contains`（内存 LRU）会出现"假 miss"——eviction 删盘失败、测试残留、启动 reload 期间文件被改等都会让 LRU 与磁盘不一致。前端据此判断"是否要跑 Worker"，假 miss 会重复跑 Worker 浪费带宽。`is_on_disk` 是兜底。
 
 ### 磁盘布局
 
 `resources/_preview_cache/`
 
-- 单文件 per entry：`<file_id>-<mtime_unix>.json`（文件名约定，不放 metadata）
-- body 与文件名 mtime 必须一致；构造 `CacheKey` 时校验
+- 单文件 per entry：`<file_id>-<image_index>.webp`
 - 写入：tmp 临时文件名 + `std::fs::rename` 原子替换
 - 清理：LRU evict 删对应文件
 
-### 后台 GC
+### `/original` 路由删除
 
-`tauri::async_runtime::spawn` 一个 task，每 30 秒跑一次：
+V3 spec 留的"点开看原图"路由（`/api/doujinshi/:id/images/:index/original`）已删除：
+- 全屏预览不再放大，统一 800px webp
+- `image_original_at` handler 删；router 两处注册删；`http_routes.rs` 测试删
 
-```
-loop {
-  tokio::time::sleep(Duration::from_secs(30)).await;
-  cache.gc().await.ok();
-}
-```
+## 前端
 
-`gc()` 行为：
-- 如果 `bytes_in_cache > max_bytes`：持续 pop LRU 最老 entry + 删磁盘文件，直到 < `0.8 * max_bytes`
-- 否则 no-op
-
-后台 GC 只在 Tauri runtime 持有；HTTP server 在独立线程（见 lib.rs `http::build_router`），它持有 `Arc<PreviewCache>` 可以直接调用 `get_or_compute` 触发读路径上的 inline evict。后台 GC 是兜底，不阻塞请求。
-
-### 配置
-
-`AppConfig` 增：
+### 缩略图渲染管线
 
 ```
-pub preview_cache_max_bytes: u64  // 200 * 1024 * 1024 默认
+DetailView
+  ├─ composables/useThumbnailPipeline.ts
+  │    ├─ Worker 调度（queue / inFlight / 并发 2）
+  │    ├─ blob URL 生命周期（createObjectURL / revoke）
+  │    └─ PUT 落盘（putImageThumb）
+  ├─ IntersectionObserver（rootMargin 420px 预读上下各 ~2 行）
+  │    └─ 进入视口 → pipeline.request(index)
+  └─ Template
+       ├─ <div class="thumb-skeleton">       (永远渲染，占底)
+       └─ <img :src="..." class="thumb-img" :class="{ 'thumb-img-loaded': loaded.has(idx) }">
 ```
 
-`AppConfig::load()` 不读 TOML——目前 AppConfig 都是程序内 hardcode；本字段也 hardcode 默认值，留接口供后续 settings 页调整。
+`request(index)` 决策：
 
-### 前端
+| `thumb_cached` | Worker 可用 | 行为 |
+|---|---|---|
+| true | * | 直挂 `apiBase + /api/doujinshi/:id/images/:idx` |
+| false | true | 入队 Worker（fetch 原图 → OffscreenCanvas 缩放 → webp → PUT 落盘 → blob URL 展示） |
+| false | false | 降级：直挂后端图（cache miss 时返原图 mime） |
 
-**不动**。V3.1 第二步（gallery detail）才会改动 DetailView.vue；本 spec 仅后端。
+### 防闪烁
+
+`<img>` 挂载瞬间 src 未解码完 → 浏览器显示空 + 黑色背景 → 用户看到"灰骨架 → 黑 → 图"三段闪烁。
+
+修法：骨架 div 永远占底，`<img>` `position:absolute` 覆盖，`opacity:0`；onLoad 触发 `markLoaded(idx)` → 切 `.thumb-img-loaded` class → opacity 过渡到 1。挂载到 onLoad 期间骨架一直可见，**没有黑色中断**。
+
+### 全屏预览组件
+
+`src/components/FullscreenPreview.vue`
+
+- 弹层遮罩（`rgba(0,0,0,0.88)`）；右上 × 按钮关闭
+- **点击遮罩空白不关闭**（避免误触；仅 Esc / × 关）
+- 左右按钮 / 键盘 ←→ 翻页；Esc 关闭；输入框聚焦时 ←→ 让位给光标
+- 计数器 `n / total`
+- 预读左右各 1 张（隐藏 `<img>` 让浏览器提前建连/缓存）
+
+每张图就是 `/api/doujinshi/:id/images/:idx`——cache hit 吐 webp，miss 吐原图 mime。不再单独请求 `/original`。
 
 ## 错误处理
 
 | 情况 | 行为 |
 |---|---|
-| zip 路径不存在 / 已删除 | cache 不写盘；handler 返回 `zip_missing: true`（现状） |
-| zip mtime 无法读取 | cache 不命中；`list_images` 失败也向上抛 HTTP 500（同 V2） |
-| 磁盘 cache 写失败 | log warn + 当前请求仍然返回正确响应；下次会重新计算 |
-| 磁盘 cache 文件损坏（parses failed） | 启动时删掉，不阻塞启动 |
-| 启动时 `_preview_cache/` 不存在 | 视为首次运行，`new()` 时 mkdir |
+| Worker fetch 失败 | 退回展示后端图（cache miss 走原图 mime） |
+| Worker 编码失败 | 同上 |
+| PUT 落盘失败 | 静默吞（`.catch(() => {})`），blob URL 仍可展示当前次 |
+| 切走文件后 PUT 返回 | 不动 images 数组（避免视图抖动） |
+| zip 路径不存在 | `/images` 返 `zip_missing: true`；前端展示 alert |
 
-## 测试
+## 验证
 
-`src-tauri/tests/preview_cache.rs`（新文件）+ 模块内 `#[cfg(test)]` 单元测试：
+后端：
 
-| 场景 | 断言 |
-|---|---|
-| `get_or_compute` miss 触发 compute + 写盘 + 命中 | 文件存在 + body bytes 等长 |
-| `peek` 命中读内存 | 不调 compute |
-| mtime 变化后同一 file_id → miss | 重 compute |
-| 容量超限 → 淘汰最老 entry（磁盘 + 内存都删） | bytes_in_cache < max_bytes |
-| `invalidate(id)` | 删除所有 key 含此 id 的 entry |
-| ETag 304：handler 收到 `If-None-Match: "<id>-<mtime>"` | 返回 304 空体 |
-| 启动 scan 重建 LRU（写 2 个文件，`new()` 后 LRU 内有 2 项） | `peek` 都命中 |
-| 损坏文件（手工写入垃圾）启动时不阻塞 | 损坏文件被删，good 仍 hit |
+```bash
+cd src-tauri && cargo test --test http_routes
+# 36/36 通过（含 thumb_cached 反映磁盘、Cache-Control: no-store、PUT 幂等）
+```
+
+前端：
+
+```bash
+pnpm exec vue-tsc --noEmit
+# 0 error
+```
+
+手动：
+
+1. 清空 `_preview_cache/` 后进入大图详情页——Network 应**不**同时加载 200+ 个 `<img>`
+2. 滚动——新 cell 进入视口时渐进加载（IntersectionObserver 触发）
+3. 点击缩略图——全屏预览，键盘 ←→ Esc 工作
+4. 第二次进入同详情页——`/images` 返 `thumb_cached: true`，Worker 不重复转码
+5. 切文件 / 退出——blob URL revoke、worker.terminate，无内存泄漏
+
+## 文件清单
+
+新增：
+- `src/composables/useThumbnailPipeline.ts`（Worker 调度封装）
+- `src/composables/usePreviewState.ts`（预览 open/index 状态机）
+- `src/components/FullscreenPreview.vue`（全屏预览组件）
+- `src/workers/previewThumb.worker.ts`（OffscreenCanvas 转码 Worker）
+
+修改：
+- `src-tauri/src/services/preview_cache.rs`（增 `is_on_disk`）
+- `src-tauri/src/http/api.rs`（`/images` 用 `contains OR is_on_disk` + `Cache-Control: no-store`；删 `image_original_at`）
+- `src-tauri/src/http/mod.rs`（删 `/original` 注册）
+- `src-tauri/tests/http_routes.rs`（删 `/original` 测试）
+- `src/views/DetailView.vue`（去 `<n-image>`、加 IO 懒加载、用 composable）
 
 ## 上线影响
 
-- **磁盘占用**：200 MB 软上限，最坏情况同馆藏 zip 总和（大馆藏 > 200 MB 的话冷淘汰）
-- **首次打开延迟不变**：仍要走 `list_images` 解压
-- **重复打开延迟**：从 ~50–200 ms → ~5 ms（命中纯读 + axum JSON 序列化）
-- **浏览器扩展**：ETag `If-None-Match` 304 后 0 字节，节省带宽
-- **使用 `lru` crate**（Cargo 加一行 dep），不自己实现双链表 LRU
+- **磁盘占用**：200 MiB 软上限（约 2000–6000 张 800px webp）
+- **首次进入延迟**：可见区 cell 立即请求原图 → 后端直返原图 mime；Worker 并发 2 转码 → 后台 PUT 落盘
+- **重复进入延迟**：可见区 cell 立即返回 webp，浏览器瞬间解码
+- **不再支持"放大查看原图"**——如果后续要回，加 `/original` 路由即可（handler / router 都很短）
