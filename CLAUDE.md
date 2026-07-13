@@ -4,19 +4,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目说明
 
-- **同人志档案**（doujinshi-records）：本地 Tauri 桌面应用，管理个人同人志库。
-- 监控 `resources/doujinshi/` 入库新压缩包，计算 BLAKE3 哈希并提取 webp 封面。
-- 文件按 4 状态机流转：`inbox → identified / will_delete / archived`。DB 行只增不改，数据永生。
-- 启动时扫描 `identified/will_delete/archived` 三个目录，把"DB 无对应行"的孤儿写入 `dirty_data` 表，由"脏数据"页提示用户。
-- 暴露本地 HTTP API（127.0.0.1）供浏览器扩展查询。
-- 仅管理本地文件，不下载或分发内容。
+**同人志档案**（doujinshi-records）：本地 Tauri 2 桌面应用，管理个人同人志库。
+
+- 监控 `resources/doujinshi/` 入库新压缩包，BLAKE3 哈希去重 + 提取 ≤100 KB webp 封面。
+- 文件按 4 状态机流转：`inbox → identified / will_delete / archived`，DB 行只增不改（"数据永生"）。
+- 启动时扫 3 个数据目录，把"DB 无对应行"的孤儿写入 `dirty_data`；把"DB 有行但磁盘丢失"的行打 `has_physical_file=false`，由"脏数据"页提示用户。
+- 暴露本地 HTTP API（`127.0.0.1`，Bearer token 鉴权）供浏览器扩展查询。
+- 仅管理本地文件，**不下载、不分发**内容。
 
 ## 技术栈
 
-- **后端**：Rust + Tauri 2 + SeaORM 1.1 (SQLite) + Axum 0.7 + notify-debouncer-full + BLAKE3 + lru
+- **后端**：Rust（stable，rustfmt + clippy）+ Tauri 2 + SeaORM 1.1（SQLite）+ Axum 0.7 + notify-debouncer-full 0.3 + BLAKE3 + lru 0.12 + webp 0.3
 - **前端**：Vue 3 + TypeScript + Naive UI + Pinia + Vue Router
-- **包管理**：pnpm workspace（单包）
+- **包管理**：pnpm 10 workspace（单包），依赖在根目录 `package.json`
 - **平台**：Windows 10/11（Tauri 2 WebView2）
+
+环境要求：Rust 1.77+（项目固定 stable）、Node 20+、pnpm 9+。
 
 ## 开发命令
 
@@ -25,166 +28,218 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ### 日常开发
 
 ```bash
-# 安装依赖（首次或新增依赖后）
-pnpm install
+pnpm install                              # 装依赖（首次或新增依赖后）
+pnpm tauri dev                            # 完整开发（Vite + Tauri + Rust）
+pnpm dev                                  # 仅前端（Vite HMR，后端需独立运行）
+pnpm build                                # 前端构建（vue-tsc --noEmit + Vite build）
+pnpm tauri build                          # 打包发布
 
-# 完整开发模式（启动 Vite + Tauri + Rust 后端）
-pnpm tauri dev
-
-# 仅前端开发（Vite HMR，后端需独立运行）
-pnpm dev
-
-# 构建前端（类型检查 + Vite build）
-pnpm build
-
-# 构建发布包
-pnpm tauri build
-```
-
-### Rust 端
-
-```bash
-# 类型检查（后端）
+# Rust 类型检查
 cd src-tauri && cargo check
+cd src-tauri && cargo clippy --all-targets
 
-# 单独运行某个测试
-cd src-tauri && cargo test <test_name>           # e.g. cargo test hashes_known_content
-cd src-tauri && cargo test <module_path>::       # e.g. cargo test services::hasher::
+# Rust 测试（按名字运行单个）
+cd src-tauri && cargo test <name>         # 如 cargo test hashes_known_content
+cd src-tauri && cargo test <module>::     # 如 cargo test services::hasher::
+cd src-tauri && cargo test                # 全部
 
-# 运行所有测试
-cd src-tauri && cargo test
-```
-
-> `src-tauri` 是独立的 crate；测试模块位于各 service 文件 `#[cfg(test)]` 内（如 `hasher.rs`、`cover.rs`、`filename_parser.rs`）。
-
-### 前端类型检查
-
-```bash
-# 严格 TypeScript 检查（与 build 同源）
+# 前端严格类型检查（与 build 同源）
 pnpm exec vue-tsc --noEmit
 ```
 
-## 项目结构
+`src-tauri` 是独立 crate。测试模块在各 service 文件的 `#[cfg(test)]` 内（`hasher.rs`、`cover.rs`、`filename_parser.rs`、`state_machine.rs`、`preview_cache.rs`、`identifier.rs` 等）。HTTP 集成测试在 `src-tauri/tests/`。
+
+## 项目结构（仅列非显然部分）
 
 ```
-doujinshi-records/
-├── src/                        # Vue 3 前端
-│   ├── views/                  # 6 个页面：Library / Detail / Inbox / Conflict / RecycleBin / Dirty / Settings
-│   ├── components/             # 通用组件（FileCard / PermanentDeleteDialog / RestoreDialog / FullscreenPreview）
-│   ├── composables/            # useThumbnailPipeline（Worker 调度）/ usePreviewState（全屏预览状态）
-│   ├── stores/index.ts         # Pinia 状态：library / recycle / inbox / dirty / settings
-│   ├── api/tauri.ts            # Tauri invoke 封装（与后端命令一一对应）
-│   ├── workers/previewThumb.worker.ts  # OffscreenCanvas 转码 Worker（详情页未缓存图→800px webp）
-│   ├── types/api.ts            # 前后端共享类型定义（含 current_location / has_physical_file / DirtyEntry）
-│   └── router.ts               # 7 个路由
-├── src-tauri/
-│   ├── src/
-│   │   ├── lib.rs              # Tauri 启动、命令注册、HTTP 端口持久化、dirty_scanner 启动
-│   │   ├── main.rs             # tokio::main、配置加载、DB 初始化（含 recovery probe）
-│   │   ├── config.rs           # AppConfig + 资源目录派生方法（identified/will_delete/archived/inbox/preview_cache）
-│   │   ├── error.rs            # AppError / AppResult
-│   │   ├── commands/           # Tauri 命令（library / inbox / recycle / dirty / settings）
-│   │   ├── services/           # 业务核心：scanner / identifier / hasher / filename_parser / archive / cover / cover_format / state_machine / dirty_scanner / preview_cache
-│   │   ├── http/               # Axum 路由 + ApiState + 鉴权中间件，HTTP 服务跑在独立线程 + 独立 tokio runtime
-│   │   ├── db/                 # SeaORM 实体 + 版本化迁移（init_schema_versioned，CURRENT_VERSION=5）
-│   │   └── models/             # 跨前后端序列化结构（FileSummary）
-│   ├── capabilities/default.json
-│   ├── tauri.conf.json         # devUrl=http://localhost:1420
-│   └── Cargo.toml
-├── resources/                  # 运行时数据（git 忽略大部分内容）
-│   ├── doujinshi/              # 入库：放 .zip/.rar
-│   ├── doujinshi-identified/   # 已识别
-│   ├── doujinshi-will-delete/  # 待删除
-│   ├── doujinshi-archived/     # 归档
-│   ├── covers/                 # 提取的封面（~100 KB WebP）
-│   ├── _preview_cache/         # 单图 webp LRU 缓存（disk-backed，<id>-<idx>.webp）
-│   └── data.db                 # SQLite
-├── docs/superpowers/           # 设计 spec + 实施 plan
-└── .claude/                    # 本项目的 CodeGraph 指令（已配置）
+src-tauri/src/
+├── main.rs              # tokio::main、配置加载、DB recovery probe、init_schema_versioned
+├── lib.rs               # AppState 装配、HTTP 端口持久化、scanner 启动、preview_cache GC
+├── config.rs            # AppConfig + 资源目录派生方法
+├── error.rs             # AppError（Io/Db/NotFound/ConflictPending/Other/Anyhow）
+├── db/
+│   ├── migrations.rs    # MIGRATIONS 数组 + init_schema_versioned，CURRENT_VERSION=5
+│   ├── recovery.rs      # 启动时按 SQLite magic 头检测 corruption，备份后重建
+│   └── entities/        # SeaORM 实体（doujinshi_file / conflict / scan_event / app_setting / ...）
+├── services/
+│   ├── scanner.rs       # notify-debouncer-full + 2s 防抖；scan_inbox_once
+│   ├── identifier.rs    # 核心流程：hash → 命中则 reactivate/忽略；否则 parse → 撞名则 conflict → 抽封面 → 落 identified
+│   ├── state_machine.rs # transition_with_dirs（4 参版本便于单测）+ 跨设备 rename 兜底
+│   ├── dirty_scanner.rs # 启动一次扫 identified/will_delete/archived，回填 has_physical_file + dirty_data
+│   ├── preview_cache.rs # 磁盘 + 内存 LRU；key=(file_id, image_index)；80% waterline
+│   ├── archive.rs       # zip/rar 解析、pick_cover、list_image_names_sorted
+│   ├── cover_format.rs  # webp 编码（≤100 KB）
+│   ├── hasher.rs        # BLAKE3
+│   ├── filename_parser.rs
+│   ├── rar_detect.rs    # 探测 unrar/7z；2 个 tool
+│   └── disk_space.rs    # preflight
+├── commands/            # Tauri invoke 命令；library / inbox / recycle / dirty / settings / guards
+└── http/
+    ├── mod.rs           # build_router 在独立 std::thread + multi-thread tokio 启动（避免 Tauri runtime starvation）
+    ├── api.rs           # 全部 HTTP handler
+    ├── auth.rs          # Bearer token 中间件（exempt 列表见下）
+    ├── auth_token.rs    # 32 字节 URL-safe base64 生成
+    └── port_allocator.rs
 ```
 
-## 架构要点
+```
+src/
+├── views/               # Library / Detail / Inbox / Conflict(/compare/:id) / RecycleBin / Dirty / Settings
+├── stores/index.ts      # 5 个 store：useScanStatusStore / useSettingsStore / useLibraryStore / useRecycleStore / useDirtyStore / useInboxStore
+├── api/
+│   ├── tauri.ts         # invoke 封装（与 Tauri command 一一对应）
+│   └── http.ts          # 走 Bearer token 的 fetch 封装（apiGet/Post/Patch/Put）
+├── composables/
+│   ├── useThumbnailPipeline.ts  # Worker 调度（并发 2，blob URL 生命周期，PUT 落盘）
+│   └── usePreviewState.ts       # 全屏预览 open/index
+├── components/          # FileCard / FullscreenPreview / PermanentDeleteDialog / RestoreDialog
+├── workers/previewThumb.worker.ts  # OffscreenCanvas 把原图转 800px webp q=0.7
+└── types/api.ts         # 前后端共享类型（FileSummary / DirtyEntry / RarError / ConflictAction / MetadataPatch ...）
+```
 
-### 后端数据流
+```
+resources/                # 运行时数据（git 忽略）
+├── doujinshi/            # 入库（顶层 .zip/.rar，不递归子目录）
+├── doujinshi-identified/ # 状态：identified
+├── doujinshi-will-delete/# 状态：will_delete（回收站）
+├── doujinshi-archived/   # 状态：archived
+├── covers/               # 提取的封面（webp，V3+；旧 V1/V2 是 jpg，按 magic bytes 探测 mime）
+├── _preview_cache/       # LRU 缩略图：<file_id>-<image_index>.webp
+└── data.db               # SQLite
+```
 
-`scanner.rs` 启动 `notify-debouncer-full`（2 秒防抖窗口）监控 inbox 目录。任一文件事件触发 `scan_inbox_once` → 遍历 `*.zip` / `*.rar` → 调用 `identifier::identify_file`：
+## 核心架构
 
-1. BLAKE3 哈希
-2. 哈希命中 → 记录 alias；若旧行已不再 `identified`，调用 `reactivate_row` 把源文件移回 `identified/`，更新 `current_location` + `has_physical_file`
-3. 文件名 + 扩展名冲突 → 写入 `conflict` 表，停在 inbox
-4. 提取封面（`archive::list_images` → `pick_cover` → `cover::extract_and_save` 用 `cover_format::encode_webp` 输出 ≤100 KB）
-5. 移动到 `doujinshi-identified/`
-6. 插入 `doujinshi_file` 行 + `filename_alias` + `scan_event`
+### 数据流（inbox → identified）
 
-扫描结束 `emit("library-updated", n)` 通知前端。
+`scanner.rs::Scanner::scan_inbox_once` 遍历 `*.zip` / `*.rar` → `identifier::identify_file`：
+
+1. RAR size gate（zip 不受影响；≤200 MB 静默通过，~1 GB 拒，>1 GB 拒）
+2. BLAKE3 算源文件 hash
+3. 命中已存在行：
+   - 行在 `identified` → 删 inbox 副本，刷 `filename_alias` + `filename`（避免 dirty_scanner 把原 identified 副本当孤儿）
+   - 行在 `will_delete` / `archived` → `reactivate_row`：把源文件 mv 回 `identified/`，状态恢复
+4. 解析文件名（`filename_parser`）
+5. `(filename, ext)` 撞名 → 写 `conflict` 表，留在 inbox 等待用户在 ConflictView 解决
+6. 抽封面（zip：list + pick_cover 直读；rar：调用 unrar/7z 解到 tempdir 后 list+pick）
+7. 落盘到 `identified/`、插 `doujinshi_file` 行、写 `filename_alias` + `scan_event`
+
+`identify_file` 出错时：rar 会通过 `rar-error` 事件把 `RarErrorPayload` 推到前端展示；扫描结束发 `library-updated`（带 processed 数）和 `scanner-status`。
 
 ### 4 状态机（state_machine.rs）
 
-`current_location` 字段驱动状态：`identified` / `will_delete` / `archived`（+ `inbox` 仅作前台投影）。状态转移集中在 `state_machine::transition_with_dirs`：DB 事务更新列 + `std::fs::rename` 移动文件。跨设备 rename 走 copy + remove 兜底。
+`current_location` 字段：`identified` / `will_delete` / `archived`（`inbox` 仅作前台投影）。
 
-- `transition_with_dirs(conn, id, Archive | Restore | MarkForDelete, identified_dir, will_delete_dir, archived_dir)`——4 参数版本便于单测
-- 非法转移（如 `archived → will_delete`）返回 Err；HTTP 路由映射成 409
-- `has_physical_file` 字段只由 `dirty_scanner` 启动扫描线程维护；状态转移不主动更新它
+- 4 个合法转移集中在 `state_machine::transition_with_dirs(conn, id, kind, identified_dir, will_delete_dir, archived_dir)`，4 参版本便于单测。
+- 非法转移（如 `archived → will_delete`）返 `Err("illegal transition...")`，HTTP 路由映射成 409。
+- `std::fs::rename` 跨设备时（`CrossesDevices` / Windows `ERROR_NOT_SAME_DEVICE=17`）走 copy + remove 兜底。涉及点：`state_machine::transition_with_dirs` / `identifier::reactivate_row` / `commands::library::move_to_will_delete` / `commands::recycle::restore_from_recycle`。
+- 状态转移后必须 `preview_cache.invalidate(id)`，否则同 id 旧缩略图会被误命中。`move_to_will_delete`（历史命令）没接 state_machine；归档/恢复已统一走 `transition_with_dirs`。
+- `has_physical_file` **只**由 `dirty_scanner` 维护，状态转移不主动更新它。
 
 ### 启动脏数据扫描（dirty_scanner.rs）
 
-启动一次扫描 `identified/`、`will_delete/`、`archived/` 三目录：
-- 文件存在但 DB 无行 → 写入 `dirty_data`（孤儿）
-- DB 行有 `current_path` 但磁盘文件丢失 → 行 `has_physical_file = false`，前端显示"文件丢失"标签
+启动一次扫 `identified/` / `will_delete/` / `archived/` 三个目录（`inbox/` 不扫，scanner 还在处理）：
 
-`inbox/` 不扫（scanner 还在处理中）。结果给前端 `/dirty` 页面 + `/api/dirty` HTTP 端点。
+- 目录里有文件但 DB 无对应行 → 写 `dirty_data`（reason=`orphan_file`）
+- DB 行的 `current_path` 已在 `location` 期望目录下但文件丢失 → `has_physical_file=false` + dirty_data（reason=`db_row_file_missing`）
+- DB 行的 `current_path` 不在期望目录但期望目录里有同文件名文件 → 自动修 `current_path` 找回，原陈旧路径留 dirty_data 记录（reason=`location_path_mismatch_resolved`）；找不到则 dirty_data（reason=`location_path_mismatch`）
+- `.gitkeep` 文件跳过
+
+### 启动 SQLite recovery（db/recovery.rs）
+
+启动时检查 `data.db` 前 16 字节是不是 `SQLite format 3\0`。不是 → 改名 `data.db.bak-<ts>` 后由 `init_schema_versioned` 建空库。**不**先尝试打开 DB（Windows 上 OS 锁会拦 rename；刻意不重试避免误伤）。
 
 ### 版本化迁移（db/migrations.rs）
 
-`init_schema_versioned` 按 `schema_version` 表的有序 `MIGRATIONS` 数组逐版本向前推进；V2 → V5 之间为非破坏性（`ALTER TABLE` 默认值 + `CREATE TABLE IF NOT EXISTS`），已有数据零损耗。`CURRENT_VERSION = 5`。
+`MIGRATIONS` 数组是唯一真相，新增列或表 **必须 append 一条**，不要改旧条目。`CURRENT_VERSION=5`。
 
-### 前端状态
+- v1 = `init_schema` bootstrap
+- v2+ = `ALTER TABLE ADD COLUMN` 或 `CREATE TABLE IF NOT EXISTS`
+- `apply_migration` 对 `ALTER TABLE ADD COLUMN` 会用 `pragma_table_info` 幂等检查（兼容老库已有该列的情况）
+- v2→v5 非破坏性：列带 `DEFAULT`，`CREATE TABLE IF NOT EXISTS`，已有数据零损耗
 
-Pinia store 持有列表数据，监听 `library-updated` 事件刷新 5 个 store（library / recycle / inbox / dirty / settings）。所有写操作直接调 Tauri command 并乐观更新本地状态。
+### HTTP API（独立 runtime）
 
-### HTTP API（独立运行时）
+`http::build_router` 在独立 `std::thread` + multi-thread tokio runtime（4 worker）启动，**不**依赖 Tauri 占用的 `#[tokio::main]` 运行时（否则 axum task 被饿死）。监听顺序：先绑 `app_setting.api_port`，被占则回退 `127.0.0.1:0`，实际端口持久化到 `app_setting.api_port`。
 
-`http::build_router` 在独立 `std::thread` + `current_thread` tokio runtime 启动 Axum，**不**依赖 Tauri 占用的 `#[tokio::main]` 运行时（避免 starvation）。首次启动绑定 `api_port` 设置中保留的端口，被占用则回退到 `127.0.0.1:0`，实际端口持久化到 `app_setting` 表供下次优先使用。CORS 全开；除 `/api/health` 与 `/api/covers/*` 外全部路由走 Bearer token 鉴权。
+**鉴权白名单**（不需 Bearer token，其余全部走 `require_auth`）：
+- `GET /api/health`
+- `GET /api/covers/*`（浏览器 `<img>` 直读）
+- `GET /api/doujinshi/:id/images*`（缩略图直读）
 
-端点清单：
-- 查询：`/api/health`、`/api/doujinshi/search`、`/api/doujinshi/by-hash/<hash>`、`/api/doujinshi/check?hash=`、`/api/doujinshi/<id>`、`/api/doujinshi/<id>/images`、`/api/doujinshi/<id>/images/<idx>`
-- 写操作：`/api/doujinshi/<id>/viewed` / `/archive` / `/restore`、`/api/doujinshi/<id>/images/<idx>/thumb`（PUT 落 webp）、`/api/conflicts/<id>/compare`
-- 资源：`/api/covers/<file_id>` / `/api/covers/by-hash/<hash>`（两者鉴权豁免，浏览器 `<img>` 直读）
-- 元数据：`/api/dirty` 列出孤儿文件
+路由表（顺序敏感；`/by-hash` 必须在 `:hash` 通配之前，`/covers/by-hash` 必须在 `:file_id` 之前）：
 
-### 跨设备 rename 兜底
+| 路径 | 方法 | 说明 |
+|---|---|---|
+| `/api/health` | GET | 健康检查，返 `{status, version}` |
+| `/api/doujinshi/search?q=&status=&limit=&offset=` | GET | 标题/社团/文件名 `LIKE %q%`；返 `{items, total}` |
+| `/api/doujinshi/check?hash=` | GET | 按 BLAKE3 查单条（浏览器扩展友好别名） |
+| `/api/doujinshi/by-hash/:hash` | GET | 同上（路径风格） |
+| `/api/doujinshi/:id` | GET | 单条详情 |
+| `/api/doujinshi/:id` | PATCH | `MetadataPatch` 部分更新；`None` 字段不写 |
+| `/api/doujinshi/:id/images` | GET | 列图，ETag = `"{id}-{mtime_unix}"` 触发 304；`Cache-Control: no-store`（因为 `thumb_cached` 依赖运行时磁盘状态） |
+| `/api/doujinshi/:id/images/:index` | GET | 单图：cache hit 吐 webp，miss 直返原图（mime 按 magic bytes 探测） |
+| `/api/doujinshi/:id/images/:index/thumb` | PUT | 前端把 Worker 转好的 webp 落 LRU；已存在返 204 幂等 |
+| `/api/doujinshi/:id/viewed` | POST | 标已读，204 |
+| `/api/doujinshi/:id/archive` | POST | 转 `archived`，非法转移 → 409 |
+| `/api/doujinshi/:id/restore` | POST | `will_delete` / `archived` → `identified` |
+| `/api/conflicts/:id/compare` | GET | 冲突对比（A 端 + B 端） |
+| `/api/covers/:file_id` | GET | 封面（webp/jpg，magic bytes 探测） |
+| `/api/covers/by-hash/:hash` | GET | 同上（hash 风格） |
+| `/api/dirty` | GET | 列出 `dirty_data` 全部 |
 
-`state_machine::transition_with_dirs` 和 V2 时点的 `library::move_to_will_delete` / `recycle::restore_from_recycle` 都做了 `std::fs::rename` 的 `CrossesDevices` / Windows `ERROR_NOT_SAME_DEVICE` 兜底（copy + remove）。spec 已记录此风险。
+URL 中 path-only（如 `cover_url`、`/api/doujinshi/:id/images/:index`）前端用 `useSettingsStore.apiBase` 拼绝对 URL。
 
-## 工作流
+### Tauri 事件（前后端实时同步）
 
-继承自 `AGENTS.md`：
+| 事件名 | 何时发 | payload |
+|---|---|---|
+| `library-updated` | scanner 扫完一轮 | `number`（processed） |
+| `scanner-status` | 扫描进度每文件 + 完成时 | `ScanStatus`（`is_scanning` / `processed` / `total` / `failed`） |
+| `rar-error` | `identify_file` 在 rar 上失败 | `RarErrorEntry`（filename / file_path / RarError） |
 
-- **必须先判断任务等级**（Level 0~3），再选择流程：Level 0（文案/样式）= Implement + Review；Level 1（单文件）= Plan + Implement + Review；Level 2（多文件/新模块）= `/plan-eng-review` + Brainstorm + Plan + Implement + `/review` + `/qa`；Level 3（架构/数据库）= 完整链。
-- **禁止直接开始编码**。复杂任务先 Plan。
-- 优先使用 gstack + Superpowers；默认不依赖 OpenSpec。
+`main.ts` 把 `library-updated` 转去并发刷新 3 个 store（library / recycle / inbox）。`scanner-status` 走 `useScanStatusStore`（首次进入还跑 `get_scan_status` 拿快照）。`rar-error` 走 `useInboxStore.pushRarError`（按 `file_path` 去重）。
+
+### LRU Preview Cache（preview_cache.rs）
+
+- 目录 `resources/_preview_cache/`，单文件 `<file_id>-<image_index>.webp`
+- 内存 `lru::LruCache<CacheKey=(i64, usize), CacheEntry>` + 字节数 `AtomicU64`
+- 容量默认 200 MiB；超 80% waterline 弹出最旧
+- 启动 `PreviewCache::new` 扫盘 `reload_from_disk`：malformed 文件按 `<id>-<idx>.webp` 解析失败就删
+- 后台 `gc()` 每 30s 兜底压回 waterline（lib.rs spawn 的循环）
+- 状态转移 / 重识别后 `invalidate(id)` 清该 id 全部 entry
+- `/images` 端点 `thumb_cached` 字段用 `contains OR is_on_disk`——`is_on_disk` 兜底防止 LRU/磁盘不一致时前端误判未缓存
+- `image_mime` / `cover_mime` 按 magic bytes 探测：webp（`RIFF....WEBP`）/png（`\x89PNG\r\n\x1a\n`）/其他默认 jpeg（浏览器通常能猜对）
+
+### 前端状态（stores/index.ts）
+
+5 个 store；`useSettingsStore` 持 `apiBase` 和 `auth_token` 是 HTTP 调用的唯一权威来源。
+
+- `useLibraryStore`：`items` / `queryInput`（v-model 用） / `query`（防抖 300ms 后真正查询） / `status`（all/viewed/not_viewed/marked） / `locationFilter`（all/identified/will_delete/archived） / `topCircles`（top 10 社团）
+- `useRecycleStore`：`present`（`has_physical_file=true`）/ `gone`（`has_physical_file=false`）—— V3 把"已物理删除但 DB 还有"和"仍在 will_delete 目录"分组
+- `useInboxStore`：`conflicts` + `rarErrors`（按 `file_path` 去重）+ `retryExtractLarge`（前端确认后调 `force_extract` 跳过 size gate）
+- `useDirtyStore`：`entries`（直接 `dirty_data` 表）
+- `useScanStatusStore`：右下浮窗展示进度，`visible = total > 0 && !dismissed`
+
+## 关键约束（开发时易踩）
+
+- **不要**在外层 command 里拼装 file-rename 逻辑，所有状态转移走 `state_machine::transition_with_dirs`。
+- **不要**在 store 里加写后逻辑触发其他 store 重载——`library-updated` 事件已统一处理，避免循环。
+- **不要**改 `MIGRATIONS` 旧条目，新增列/表必须 append；并保证幂等（用 `CREATE TABLE IF NOT EXISTS` 或 `pragma_table_info` 判列存不存在）。
+- **不要**假设前后端 event 总能送达：HTTP 路由必须独立可调用（前端 store 刷新、`apiGet/Post/Put/Patch` 都走 HTTP），Tauri command 是辅助通道。
+- 启动扫描器**只**处理 `resources/doujinshi/` 顶层 `.zip`/`.rar`，不递归子目录。inbox 之外的 3 个目录由 `dirty_scanner` 启动时扫一次。
+- 防抖窗口 2 秒，新文件 ~2-3 秒内出现在 Library。
+- HTTP 端口是 OS 随机分配，**不**固定；端口持久化到 `app_setting.api_port`，**不**直接读该值来拼 URL，必须用 `useSettingsStore.apiBase`（用户在 Settings 改完要重启 listener，但 `api_port` 已是持久化值）。
+- 封面输出是 webp（V3+；`cover_format::encode_webp`），HTTP `cover` handler 按 magic bytes 探测 mime 而不是看扩展名（旧 V1/V2 写的 jpg 也走该路由）。
+- `app_setting` 表里至少含：`auth_token`（首次启动 32 字节 URL-safe base64 生成，persisted）、`api_port`（`0`=OS 随机，否则锁定端口）。
+- 冲突解决 4 选 1（`commands::inbox::ConflictAction`）：`keep_a`（删 B，保留 A）/ `replace_b`（删 A zip，让 B 顶替）/ `keep_both`（B 加 `(copy)` 后缀入库）/ `skip`（原行为，只标 resolved）。`has_open_conflict=true` 时前端禁用归档/移回收站/彻底删除等按钮，后端 `commands::guards::ensure_no_open_conflict` 兜底（HTTP 浏览器扩展绕不过）。
 
 ## 关键文档
 
-- 设计 spec：`docs/superpowers/specs/2026-07-09-doujinshi-records-design.md`
+- 设计 spec（V1 基础）：`docs/superpowers/specs/2026-07-09-doujinshi-records-design.md`
 - V3 spec（归档 + 脏数据 + webp）：`docs/superpowers/specs/2026-07-11-v3-archive-and-dirty-data.md`
 - V3.1 spec（LRU preview cache）：`docs/superpowers/specs/2026-07-11-v31-lru-preview-cache.md`
-- 实施 plan：`docs/superpowers/plans/2026-07-09-doujinshi-records-v1.md`
-- V3 plan：`docs/superpowers/plans/2026-07-11-v3-archive-and-dirty-data.md`
-- V3.1 plan：`docs/superpowers/plans/2026-07-11-v31-lru-preview-cache.md`
-- v1.x 增量 plan：`docs/superpowers/plans/v1x/`
-- v2 增量 plan：`docs/superpowers/plans/v2/`
+- 实施 plan：`docs/superpowers/plans/2026-07-09-doujinshi-records-v1.md` / `2026-07-11-v3-archive-and-dirty-data.md` / `2026-07-11-v31-lru-preview-cache.md`
+- 增量 plan：`docs/superpowers/plans/v1x/` / `v2/`
 - 项目总览：`README.md`
-- 协作工作流：`AGENTS.md`
-
-## 开发注意
-
-- `pnpm.onlyBuiltDependencies`（旧字段，pnpm 10 已移到 `pnpm.workspace`）。
-- 扫描器只看 `resources/doujinshi/` 顶层，**不递归子目录**；inbox 之外的 3 个目录由 dirty_scanner 启动扫描。
-- 防抖窗口 2 秒，所以新文件 ~2-3 秒内出现在 Library。
-- DB schema 在 `src-tauri/src/db/migrations.rs`，用版本化迁移（`init_schema_versioned` + `CURRENT_VERSION`）；`init_schema` 是 v1 bootstrap。**新增列或表必须 append 一个 MIGRATIONS 条目**，不要改旧条目。
-- 后端服务日志通过 `tracing`，运行 `pnpm tauri dev` 时在终端可见。
-- HTTP 端口是 OS 随机分配，**不**固定；前端 `useSettingsStore` 是唯一权威来源。
-- 文件状态转移一律走 `state_machine::transition_with_dirs`，不要在外层 command 拼装 file-rename 逻辑。
-- 封面输出是 webp（lossless），由 `cover_format::encode_webp` 负责；HTTP 路由的 Content-Type 仍是 `image/jpeg` 因为现有 jpg 历史封面也走该路径，浏览器对 jpg 解析正常。
-- **`/api/doujinshi/:id/images` 走 LRU preview cache**：磁盘 `_preview_cache/<id>-<idx>.webp` + 内存 `lru::LruCache`，cache key `(file_id, image_index)` 单图粒度；HTTP ETag = `"{id}-{mtime_unix}"` 触发 304 短路（响应体本身）。`/images` 端点响应 `Cache-Control: no-store` 因为 `thumb_cached` 字段依赖磁盘文件存在与否是运行时状态。后台 30s GC 兜底压回 80% waterline。`thumb_cached` 计算用 `contains OR is_on_disk`——LRU miss 但磁盘有文件（eviction 删盘失败 / 启动 reload 失败等）也算 hit，前端据此跳过 Worker。
+- CodeGraph 使用：`.claude/CLAUDE.md`
