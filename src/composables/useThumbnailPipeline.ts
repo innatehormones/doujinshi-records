@@ -151,13 +151,15 @@ export function useThumbnailPipeline(opts: {
     loaded.value = next
   }
 
-  /// images 重置时清空所有派生状态（URL / 队列 / blob）。
+  /// images 重置时清空所有派生状态（URL / 队列 / blob）。按 fileId 监听
+  /// 而非 images 数组：同文件内某张图把 thumb_cached 翻 true 时会替换
+  /// images 数组，但只该刷新那一行，不该 reset 整个 pipeline（否则所有
+  /// 已挂载的 `<img>` 会被一并卸载 → 已加载图片出现重新加载闪烁）。
   watch(
-    opts.images,
+    () => opts.fileId.value,
     () => {
       reset()
     },
-    { flush: "post" },
   )
 
   onBeforeUnmount(() => {
