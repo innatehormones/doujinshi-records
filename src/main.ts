@@ -6,7 +6,7 @@ import router from "./router"
 import { listen } from "@tauri-apps/api/event"
 import { useLibraryStore, useRecycleStore, useInboxStore, useThemeStore } from "@/stores"
 import type { RarErrorEntry } from "@/types/api"
-import "./styles/base.css"
+import "./styles/tailwind.css"
 
 const pinia = createPinia()
 const app = createApp(App)

@@ -1,0 +1,176 @@
+@import "tailwindcss";
+
+@theme {
+  --color-phosphor-green: #3ecf8e;
+  --color-mint-pulse: #00c573;
+  --color-forest-depth: #1f4b37;
+  --color-midnight-emerald: #006239;
+  --color-snow: #fafafa;
+  --color-silver-mist: #b4b4b4;
+  --color-smoke: #898989;
+  --color-graphite: #4d4d4d;
+  --color-slate: #393939;
+  --color-charcoal: #2e2e2e;
+  --color-ash: #242424;
+  --color-obsidian: #121212;
+  --color-obsidian-deep: #0d0d0d;
+  --color-ember-orange: #d97706;
+  --color-ember-red: #d03050;
+
+  --font-ui: "Inter", "Manrope", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  --font-sans: var(--font-ui);
+  --font-mono: "JetBrains Mono", "Source Code Pro", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  --text-caption: 12px;
+  --text-body-sm: 14px;
+  --text-body: 16px;
+  --text-subheading: 18px;
+  --text-heading-sm: 24px;
+  --text-heading: 36px;
+
+  --leading-caption: 1.5;
+  --leading-body-sm: 1.43;
+  --leading-body: 1.5;
+  --leading-subheading: 1.38;
+  --leading-heading-sm: 1.33;
+  --leading-heading: 1.2;
+
+  --tracking-body: -0.007em;
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+
+  --radius-tags: 9999px;
+  --radius-cards: 16px;
+  --radius-inputs: 8px;
+  --radius-buttons: 9999px;
+
+  --shadow-sm: 0 4px 6px -1px rgb(0 0 0 / 10%), 0 2px 4px -2px rgb(0 0 0 / 10%);
+}
+
+@theme inline {
+  --color-canvas: var(--surface-canvas);
+  --color-card: var(--surface-card);
+  --color-elevated: var(--surface-elevated);
+  --color-border: var(--surface-border);
+  --color-border-strong: var(--surface-border-strong);
+}
+
+:root {
+  --surface-canvas: var(--color-obsidian);
+  --surface-card: var(--color-obsidian);
+  --surface-elevated: var(--color-ash);
+  --surface-border: var(--color-charcoal);
+  --surface-border-strong: var(--color-slate);
+
+  --spacing-8: 8px;
+  --spacing-16: 16px;
+  --spacing-24: 24px;
+  --spacing-32: 32px;
+  --spacing-40: 40px;
+  --spacing-48: 48px;
+  --spacing-64: 64px;
+  --spacing-80: 80px;
+
+  --page-pad-x: 32px;
+  --page-pad-y: 24px;
+  --page-header-h: 56px;
+  --card-padding: 20px;
+}
+
+:root[data-theme="light"] {
+  --color-mint-pulse: #009960;
+  --color-forest-depth: #c6efd6;
+  --color-midnight-emerald: #c6efd6;
+  --color-snow: #121212;
+  --color-silver-mist: #4a4a4a;
+  --color-smoke: #6a6a6a;
+  --color-graphite: #b4b4b4;
+  --color-slate: #d4d4d4;
+  --color-charcoal: #e5e5e5;
+  --color-ash: #f5f5f5;
+  --color-obsidian: #fafafa;
+  --color-obsidian-deep: #f0f0f0;
+
+  --surface-canvas: var(--color-obsidian);
+  --surface-card: #ffffff;
+  --surface-elevated: var(--color-ash);
+  --surface-border: var(--color-charcoal);
+  --surface-border-strong: var(--color-slate);
+
+  --shadow-sm: 0 4px 6px -1px rgb(0 0 0 / 6%), 0 2px 4px -2px rgb(0 0 0 / 4%);
+}
+
+@layer base {
+  html,
+  body,
+  #app {
+    height: 100%;
+    background: var(--surface-canvas);
+    color: var(--color-snow);
+    font-family: var(--font-ui);
+    font-size: var(--text-body-sm);
+    line-height: var(--leading-body-sm);
+    letter-spacing: var(--tracking-body);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  h1,
+  h2,
+  h3,
+  h4 {
+    color: var(--color-snow);
+    font-weight: var(--font-weight-medium);
+    letter-spacing: var(--tracking-body);
+  }
+
+  code,
+  pre,
+  .mono {
+    font-family: var(--font-mono);
+    font-size: var(--text-caption);
+    letter-spacing: 0.1em;
+  }
+
+  a {
+    color: var(--color-mint-pulse);
+    text-decoration: none;
+  }
+
+  a:hover {
+    text-decoration: underline;
+  }
+
+  ::selection {
+    background: var(--color-midnight-emerald);
+    color: var(--color-snow);
+  }
+}
+
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+*::-webkit-scrollbar-thumb {
+  border-radius: 9999px;
+  background: var(--color-graphite);
+}
+
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--color-slate);
+}
+
+@layer components {
+  .page {
+    display: flex;
+    min-height: 100%;
+    flex-direction: column;
+    gap: var(--spacing-24);
+    padding: var(--page-pad-y) var(--page-pad-x);
+  }
+}
