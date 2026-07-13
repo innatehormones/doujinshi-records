@@ -75,10 +75,17 @@ onUnmounted(() => window.removeEventListener("keydown", onKey))
 </script>
 
 <template>
-  <div class="preview-overlay">
-    <button class="preview-close" type="button" aria-label="关闭" @click="emit('close')">×</button>
+  <div class="fixed inset-0 z-[1000] flex select-none items-center justify-center bg-black/88">
     <button
-      class="preview-nav preview-prev"
+      class="absolute top-3 right-4 flex size-9 cursor-pointer items-center justify-center rounded-full border-0 bg-white/12 text-2xl leading-none text-white hover:bg-white/20"
+      type="button"
+      aria-label="关闭"
+      @click="emit('close')"
+    >
+      ×
+    </button>
+    <button
+      class="absolute top-1/2 left-3 h-16 w-12 -translate-y-1/2 cursor-pointer rounded border-0 bg-white/8 text-4xl leading-none text-white enabled:hover:bg-white/18 disabled:cursor-not-allowed disabled:opacity-25"
       type="button"
       :disabled="prevDisabled"
       aria-label="上一张"
@@ -87,7 +94,7 @@ onUnmounted(() => window.removeEventListener("keydown", onKey))
       ‹
     </button>
     <button
-      class="preview-nav preview-next"
+      class="absolute top-1/2 right-3 h-16 w-12 -translate-y-1/2 cursor-pointer rounded border-0 bg-white/8 text-4xl leading-none text-white enabled:hover:bg-white/18 disabled:cursor-not-allowed disabled:opacity-25"
       type="button"
       :disabled="nextDisabled"
       aria-label="下一张"
@@ -95,94 +102,24 @@ onUnmounted(() => window.removeEventListener("keydown", onKey))
     >
       ›
     </button>
-    <div class="preview-stage">
-      <img v-if="currentSrc" :src="currentSrc" :alt="images[index]?.name ?? ''" class="preview-img" />
+    <div class="flex max-h-[88vh] max-w-[92vw] items-center justify-center">
+      <img
+        v-if="currentSrc"
+        :src="currentSrc"
+        :alt="images[index]?.name ?? ''"
+        class="block max-h-[88vh] max-w-[92vw] object-contain"
+      />
     </div>
-    <div v-if="images.length > 0" class="preview-counter">
+    <div
+      v-if="images.length > 0"
+      class="absolute bottom-4 left-1/2 -translate-x-1/2 rounded-xl bg-black/35 px-2.5 py-1 text-[13px] text-white/85"
+    >
       {{ index + 1 }} / {{ images.length }}
     </div>
     <!-- 预读左右各 1 张：隐藏 img 让浏览器提前建连/缓存。 -->
-    <div class="preview-preload" aria-hidden="true">
+    <div class="invisible pointer-events-none absolute size-0 overflow-hidden" aria-hidden="true">
       <img v-if="prevSrc" :src="prevSrc" alt="" />
       <img v-if="nextSrc" :src="nextSrc" alt="" />
     </div>
   </div>
 </template>
-
-<style scoped>
-.preview-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.88);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 1000;
-  user-select: none;
-}
-.preview-close {
-  position: absolute;
-  top: 12px;
-  right: 16px;
-  width: 36px;
-  height: 36px;
-  border: none;
-  border-radius: 18px;
-  background: rgba(255, 255, 255, 0.12);
-  color: #fff;
-  font-size: 24px;
-  line-height: 1;
-  cursor: pointer;
-}
-.preview-close:hover { background: rgba(255, 255, 255, 0.2); }
-.preview-nav {
-  position: absolute;
-  top: 50%;
-  transform: translateY(-50%);
-  width: 48px;
-  height: 64px;
-  border: none;
-  border-radius: 4px;
-  background: rgba(255, 255, 255, 0.08);
-  color: #fff;
-  font-size: 36px;
-  line-height: 1;
-  cursor: pointer;
-}
-.preview-nav:hover:not(:disabled) { background: rgba(255, 255, 255, 0.18); }
-.preview-nav:disabled { opacity: 0.25; cursor: not-allowed; }
-.preview-prev { left: 12px; }
-.preview-next { right: 12px; }
-.preview-stage {
-  max-width: 92vw;
-  max-height: 88vh;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-.preview-img {
-  max-width: 92vw;
-  max-height: 88vh;
-  object-fit: contain;
-  display: block;
-}
-.preview-counter {
-  position: absolute;
-  bottom: 16px;
-  left: 50%;
-  transform: translateX(-50%);
-  color: rgba(255, 255, 255, 0.85);
-  font-size: 13px;
-  background: rgba(0, 0, 0, 0.35);
-  padding: 4px 10px;
-  border-radius: 12px;
-}
-.preview-preload {
-  position: absolute;
-  width: 0;
-  height: 0;
-  overflow: hidden;
-  visibility: hidden;
-  pointer-events: none;
-}
-</style>

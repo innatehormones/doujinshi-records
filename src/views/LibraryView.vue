@@ -81,38 +81,38 @@ async function onCardPermanentDelete(id: number) {
 
 <template>
   <div class="page">
-    <header class="page-header">
-      <div class="page-header-left">
-        <h1>我的同人志</h1>
-        <span class="count mono">{{ totalLabel }}</span>
+    <header class="flex flex-wrap items-center justify-between gap-6">
+      <div class="flex items-baseline gap-4">
+        <h1 class="text-heading-sm font-medium text-snow tracking-body">我的同人志</h1>
+        <span class="font-mono text-caption text-smoke tracking-[0.1em]">{{ totalLabel }}</span>
       </div>
-      <div class="page-header-right">
+      <div class="flex flex-wrap items-center gap-2">
         <n-input
           :value="store.getQuery()"
           @update:value="store.setQuery"
           placeholder="搜索标题 / 社团 / 文件名"
           clearable
           size="medium"
-          class="search-input"
+          class="w-[280px] max-w-full"
         />
         <n-select
           v-model:value="store.status"
           :options="statusOptions"
           size="medium"
-          class="filter-select"
+          class="w-[140px]"
         />
         <n-select
           v-model:value="store.locationFilter"
           :options="locationOptions"
           size="medium"
-          class="filter-select"
+          class="w-[140px]"
         />
       </div>
     </header>
 
     <n-space
       v-if="store.topCircles.length > 0"
-      class="circle-chips"
+      class="-mt-2"
       :wrap="true"
     >
       <n-tag
@@ -138,7 +138,7 @@ async function onCardPermanentDelete(id: number) {
         v-if="!store.loading && store.items.length === 0"
         description="还没有文件，把压缩包丢进 resources/doujinshi/ 即可。"
       />
-      <div v-else class="card-grid">
+      <div v-else class="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4">
         <file-card
           v-for="f in store.items"
           :key="f.id"
@@ -155,56 +155,3 @@ async function onCardPermanentDelete(id: number) {
     </n-spin>
   </div>
 </template>
-
-<style scoped>
-.page {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-24);
-  padding: var(--page-pad-y) var(--page-pad-x);
-}
-.page-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--spacing-24);
-  flex-wrap: wrap;
-}
-.page-header-left {
-  display: flex;
-  align-items: baseline;
-  gap: var(--spacing-16);
-}
-.page-header h1 {
-  font-size: var(--text-heading-sm);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-snow);
-  letter-spacing: var(--tracking-body);
-}
-.page-header .count {
-  font-size: var(--text-caption);
-  color: var(--color-smoke);
-  letter-spacing: 0.1em;
-}
-.page-header-right {
-  display: flex;
-  align-items: center;
-  gap: var(--spacing-8);
-  flex-wrap: wrap;
-}
-.search-input {
-  width: 280px;
-  max-width: 100%;
-}
-.filter-select {
-  width: 140px;
-}
-.circle-chips {
-  margin-top: -8px;
-}
-.card-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 16px;
-}
-</style>

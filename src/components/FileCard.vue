@@ -38,28 +38,55 @@ function locationLabel(): string {
 </script>
 
 <template>
-  <article class="card" @click="emit('open', file.id)">
-    <div class="cover">
-      <img v-if="file.cover_url" :src="coverSrc()" alt="" />
-      <div v-else class="no-cover">
+  <article
+    class="flex flex-col overflow-hidden rounded-cards border border-border bg-card transition-[border-color,transform] duration-150 hover:border-slate"
+    @click="emit('open', file.id)"
+  >
+    <div class="relative aspect-[3/4] overflow-hidden border-b border-border bg-obsidian-deep">
+      <img v-if="file.cover_url" :src="coverSrc()" alt="" class="size-full object-cover" />
+      <div
+        v-else
+        class="flex size-full items-center justify-center font-mono text-caption uppercase tracking-[0.1em] text-smoke"
+      >
         <span>暂无封面</span>
       </div>
-      <div class="badges">
-        <span v-if="file.viewed" class="badge badge-viewed" title="已查看">V</span>
-        <span v-if="locationLabel()" class="badge badge-loc" :title="locationLabel()">
+      <div class="absolute top-2 left-2 flex gap-1">
+        <span
+          v-if="file.viewed"
+          class="inline-flex size-5 items-center justify-center rounded-full border border-current bg-obsidian/85 font-mono text-[11px] font-medium text-phosphor-green backdrop-blur-sm"
+          title="已查看"
+        >
+          V
+        </span>
+        <span
+          v-if="locationLabel()"
+          class="inline-flex size-5 items-center justify-center rounded-full border border-current bg-obsidian/85 font-mono text-[11px] font-medium text-snow backdrop-blur-sm"
+          :title="locationLabel()"
+        >
           {{ locationLabel().charAt(0) }}
         </span>
-        <span v-if="!file.has_physical_file" class="badge badge-gone" title="文件丢失">!</span>
+        <span
+          v-if="!file.has_physical_file"
+          class="inline-flex size-5 items-center justify-center rounded-full border border-current bg-obsidian/85 font-mono text-[11px] font-medium text-ember-orange backdrop-blur-sm"
+          title="文件丢失"
+        >
+          !
+        </span>
       </div>
     </div>
-    <div class="body">
-      <div class="title" :title="file.title">{{ file.title }}</div>
-      <div class="meta">
-        <span v-if="file.circle" class="circle">{{ file.circle }}</span>
-        <span class="size mono">{{ formatSize(file.size_bytes) }}</span>
+    <div class="flex flex-col gap-2 p-4">
+      <div class="truncate text-body-sm font-medium leading-[1.3] text-snow" :title="file.title">
+        {{ file.title }}
       </div>
-      <div class="actions" @click.stop>
-        <button class="btn" @click="emit('viewed', file.id)">
+      <div class="flex min-h-4 items-center justify-between text-caption text-smoke">
+        <span v-if="file.circle" class="max-w-[60%] truncate">{{ file.circle }}</span>
+        <span class="font-mono text-graphite tracking-[0.05em]">{{ formatSize(file.size_bytes) }}</span>
+      </div>
+      <div class="mt-2 flex flex-wrap gap-2" @click.stop>
+        <button
+          class="min-w-[60px] flex-1 cursor-pointer rounded-full border border-slate bg-transparent px-3 py-1.5 font-sans text-caption font-medium text-snow transition-[border-color,background-color] duration-150 hover:border-graphite hover:bg-snow/4"
+          @click="emit('viewed', file.id)"
+        >
           {{ file.viewed ? "取消已看" : "标记已看" }}
         </button>
 
@@ -71,7 +98,9 @@ function locationLabel(): string {
             @positive-click="emit('archive', file.id)"
           >
             <template #trigger>
-              <button class="btn">归档</button>
+              <button class="min-w-[60px] flex-1 cursor-pointer rounded-full border border-slate bg-transparent px-3 py-1.5 font-sans text-caption font-medium text-snow transition-[border-color,background-color] duration-150 hover:border-graphite hover:bg-snow/4">
+                归档
+              </button>
             </template>
             把《{{ file.title }}》移到归档目录？
           </n-popconfirm>
@@ -81,7 +110,9 @@ function locationLabel(): string {
             @positive-click="emit('mark-delete', file.id)"
           >
             <template #trigger>
-              <button class="btn btn-warn">移到回收站</button>
+              <button class="min-w-[60px] flex-1 cursor-pointer rounded-full border border-ember-orange bg-transparent px-3 py-1.5 font-sans text-caption font-medium text-ember-orange transition-[border-color,background-color] duration-150 hover:bg-ember-orange/8">
+                移到回收站
+              </button>
             </template>
             把《{{ file.title }}》移到回收站？随时可在回收站页取回。
           </n-popconfirm>
@@ -89,7 +120,12 @@ function locationLabel(): string {
 
         <!-- will_delete: 取回 + 彻底清理 -->
         <template v-else-if="file.current_location === 'will_delete'">
-          <button class="btn" @click="emit('restore', file.id)">取回</button>
+          <button
+            class="min-w-[60px] flex-1 cursor-pointer rounded-full border border-slate bg-transparent px-3 py-1.5 font-sans text-caption font-medium text-snow transition-[border-color,background-color] duration-150 hover:border-graphite hover:bg-snow/4"
+            @click="emit('restore', file.id)"
+          >
+            取回
+          </button>
           <n-popconfirm
             v-if="file.has_physical_file"
             positive-text="永久删除"
@@ -98,7 +134,9 @@ function locationLabel(): string {
             @positive-click="emit('permanent-delete', file.id)"
           >
             <template #trigger>
-              <button class="btn btn-danger">彻底清理</button>
+              <button class="min-w-[60px] flex-1 cursor-pointer rounded-full border border-ember-red bg-transparent px-3 py-1.5 font-sans text-caption font-medium text-ember-red transition-[border-color,background-color] duration-150 hover:bg-ember-red/8">
+                彻底清理
+              </button>
             </template>
             彻底清理将从硬盘删除 zip 文件（DB 记录保留，元数据可搜索）。
           </n-popconfirm>
@@ -106,138 +144,14 @@ function locationLabel(): string {
 
         <!-- archived: 取回 -->
         <template v-else-if="file.current_location === 'archived'">
-          <button class="btn" @click="emit('restore', file.id)">取回</button>
+          <button
+            class="min-w-[60px] flex-1 cursor-pointer rounded-full border border-slate bg-transparent px-3 py-1.5 font-sans text-caption font-medium text-snow transition-[border-color,background-color] duration-150 hover:border-graphite hover:bg-snow/4"
+            @click="emit('restore', file.id)"
+          >
+            取回
+          </button>
         </template>
       </div>
     </div>
   </article>
 </template>
-
-<style scoped>
-.card {
-  background: var(--surface-card);
-  border: 1px solid var(--surface-border);
-  border-radius: var(--radius-cards);
-  overflow: hidden;
-  display: flex;
-  flex-direction: column;
-  transition: border-color 0.15s ease, transform 0.15s ease;
-}
-.card:hover {
-  border-color: var(--color-slate);
-}
-
-.cover {
-  position: relative;
-  aspect-ratio: 3 / 4;
-  background: var(--color-obsidian-deep);
-  overflow: hidden;
-  border-bottom: 1px solid var(--surface-border);
-}
-.cover img {
-  width: 100%;
-  height: 100%;
-  object-fit: cover;
-  display: block;
-}
-.no-cover {
-  width: 100%;
-  height: 100%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  color: var(--color-smoke);
-  font-family: var(--font-mono);
-  font-size: var(--text-caption);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-}
-.badges {
-  position: absolute;
-  top: var(--spacing-8);
-  left: var(--spacing-8);
-  display: flex;
-  gap: 4px;
-}
-.badge {
-  width: 20px;
-  height: 20px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-weight: var(--font-weight-medium);
-  border-radius: 9999px;
-  background: rgba(18, 18, 18, 0.85);
-  backdrop-filter: blur(4px);
-  border: 1px solid currentColor;
-}
-.badge-viewed { color: var(--color-phosphor-green); }
-.badge-loc    { color: var(--color-snow); }
-.badge-gone   { color: var(--color-ember-orange); }
-
-.body {
-  padding: var(--spacing-16);
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-8);
-}
-.title {
-  color: var(--color-snow);
-  font-size: var(--text-body-sm);
-  font-weight: var(--font-weight-medium);
-  line-height: 1.3;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.meta {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  color: var(--color-smoke);
-  font-size: var(--text-caption);
-  min-height: 16px;
-}
-.circle {
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  max-width: 60%;
-}
-.size {
-  color: var(--color-graphite);
-  letter-spacing: 0.05em;
-}
-
-.actions {
-  display: flex;
-  gap: var(--spacing-8);
-  margin-top: var(--spacing-8);
-  flex-wrap: wrap;
-}
-.btn {
-  flex: 1;
-  min-width: 60px;
-  background: transparent;
-  color: var(--color-snow);
-  border: 1px solid var(--color-slate);
-  border-radius: 9999px;
-  padding: 6px 12px;
-  font-family: var(--font-ui);
-  font-size: var(--text-caption);
-  font-weight: var(--font-weight-medium);
-  letter-spacing: 0;
-  cursor: pointer;
-  transition: border-color 0.15s ease, background 0.15s ease;
-}
-.btn:hover {
-  border-color: var(--color-graphite);
-  background: rgba(255, 255, 255, 0.04);
-}
-.btn-warn { border-color: var(--color-ember-orange); color: var(--color-ember-orange); }
-.btn-warn:hover { background: rgba(255, 140, 0, 0.08); }
-.btn-danger { border-color: var(--color-ember-red); color: var(--color-ember-red); }
-.btn-danger:hover { background: rgba(220, 38, 38, 0.08); }
-</style>

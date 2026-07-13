@@ -198,10 +198,17 @@ function locationLabel(): string {
 
 <template>
   <div class="page">
-    <header class="page-header">
+    <header class="flex items-baseline gap-4">
       <n-button text @click="router.back()">← 返回</n-button>
-      <h1>{{ file?.title ?? `文件 #${id}` }}</h1>
-      <span v-if="file" class="count mono">id {{ file.id }}</span>
+      <h1 class="text-heading-sm font-medium text-snow tracking-body">
+        {{ file?.title ?? `文件 #${id}` }}
+      </h1>
+      <span
+        v-if="file"
+        class="font-mono text-caption text-smoke tracking-[0.1em]"
+      >
+        id {{ file.id }}
+      </span>
     </header>
     <n-spin :show="loading || saving">
       <div v-if="file" class="detail-grid">
@@ -210,7 +217,7 @@ function locationLabel(): string {
             v-if="zipMissing"
             type="warning"
             title="压缩包已不在磁盘"
-            style="margin-bottom: 12px"
+            class="mb-3"
           />
           <n-empty
             v-else-if="images.length === 0"
@@ -310,28 +317,6 @@ function locationLabel(): string {
 </template>
 
 <style scoped>
-.page {
-  display: flex;
-  flex-direction: column;
-  gap: var(--spacing-24);
-  padding: var(--page-pad-y) var(--page-pad-x);
-}
-.page-header {
-  display: flex;
-  align-items: baseline;
-  gap: var(--spacing-16);
-}
-.page-header h1 {
-  font-size: var(--text-heading-sm);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-snow);
-  letter-spacing: var(--tracking-body);
-}
-.page-header .count {
-  font-size: var(--text-caption);
-  color: var(--color-smoke);
-  letter-spacing: 0.1em;
-}
 .detail-grid {
   display: grid;
   gap: 16px;
