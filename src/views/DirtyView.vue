@@ -24,11 +24,13 @@ function dirLabel(dir: string): string {
 
 <template>
   <div class="page">
-    <header class="page-header">
-      <h1>脏数据</h1>
-      <span class="count mono">{{ store.entries.length }} 条</span>
+    <header class="flex items-baseline justify-between gap-4">
+      <h1 class="text-heading-sm font-medium text-snow tracking-body">脏数据</h1>
+      <span class="font-mono text-caption text-smoke tracking-[0.1em]">
+        {{ store.entries.length }} 条
+      </span>
     </header>
-    <p style="color: #aaa; margin-bottom: 16px">
+    <p class="mb-4 text-silver-mist">
       启动扫描发现：这些文件位于已入库 / 回收站 / 归档目录，但数据库无对应行。
       V3 不提供自动处理——手动清理或重新入库。
     </p>
@@ -39,20 +41,20 @@ function dirLabel(dir: string): string {
       />
       <n-list bordered>
         <n-list-item v-for="e in store.entries" :key="e.id">
-          <div style="display: flex; flex-direction: column; gap: 4px; width: 100%">
-            <div style="display: flex; gap: 8px; align-items: center">
+          <div class="flex w-full flex-col gap-1">
+            <div class="flex items-center gap-2">
               <n-tag size="small">{{ dirLabel(e.detected_dir) }}</n-tag>
-              <span style="color: var(--color-smoke); font-family: var(--font-mono); font-size: 12px">
+              <span class="font-mono text-caption text-smoke">
                 {{ formatSize(e.file_size) }}
               </span>
-              <span style="color: var(--color-smoke); font-family: var(--font-mono); font-size: 11px; margin-left: auto">
+              <span class="ml-auto font-mono text-[11px] text-smoke">
                 {{ e.first_seen_at }}
               </span>
             </div>
-            <div style="color: var(--color-snow); font-size: 13px; word-break: break-all">
+            <div class="break-all text-[13px] text-snow">
               {{ e.file_path }}
             </div>
-            <div style="color: var(--color-graphite); font-size: 11px">
+            <div class="text-[11px] text-graphite">
               reason: {{ e.reason }}
             </div>
           </div>
@@ -61,23 +63,3 @@ function dirLabel(dir: string): string {
     </n-spin>
   </div>
 </template>
-
-<style scoped>
-.page-header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--spacing-16);
-}
-.page-header h1 {
-  font-size: var(--text-heading-sm);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-snow);
-  letter-spacing: var(--tracking-body);
-}
-.page-header .count {
-  font-size: var(--text-caption);
-  color: var(--color-smoke);
-  letter-spacing: 0.1em;
-}
-</style>

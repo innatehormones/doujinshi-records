@@ -56,19 +56,21 @@ function rarErrorTitle(kind: RarError["kind"]): string {
 
 <template>
   <div class="page">
-    <header class="page-header">
-      <h1>待识别</h1>
-      <span class="count mono">{{ store.conflicts.length }} 个待处理</span>
+    <header class="flex items-baseline justify-between gap-4">
+      <h1 class="text-heading-sm font-medium text-snow tracking-body">待识别</h1>
+      <span class="font-mono text-caption text-smoke tracking-[0.1em]">
+        {{ store.conflicts.length }} 个待处理
+      </span>
     </header>
     <n-card title="待识别 · 文件名冲突">
-      <p style="color: #aaa">
+      <p class="text-silver-mist">
         文件名与已识别库内文件相同的压缩包会停在这里。点「跳过」让新文件留在 inbox 不动，或点「内容比对」做内容级决策。
       </p>
     </n-card>
 
     <!-- RAR 错误卡片：扫描器通过 `rar-error` 事件上报。 -->
-    <div v-if="store.rarErrors.length > 0" style="margin-top: 16px">
-      <h3 style="margin-bottom: 8px">RAR 处理失败 ({{ store.rarErrors.length }})</h3>
+    <div v-if="store.rarErrors.length > 0" class="mt-4">
+      <h3 class="mb-2">RAR 处理失败 ({{ store.rarErrors.length }})</h3>
       <n-alert
         v-for="err in store.rarErrors"
         :key="err.file_path"
@@ -76,11 +78,11 @@ function rarErrorTitle(kind: RarError["kind"]): string {
         :title="`${err.filename}：${rarErrorTitle(err.error.kind)}`"
         closable
         @close="store.dismissRarError(err.file_path)"
-        style="margin-bottom: 8px"
+        class="mb-2"
       >
         <template v-if="err.error.kind === 'unrar_not_installed'">
           本机未安装 RAR 解压工具（WinRAR / 7-Zip），请先安装：
-          <n-space style="margin-top: 8px">
+          <n-space class="mt-2">
             <n-button tag="a" :href="WINRAR_URL" target="_blank" type="primary">
               下载 WinRAR
             </n-button>
@@ -93,7 +95,7 @@ function rarErrorTitle(kind: RarError["kind"]): string {
         <template v-else-if="err.error.kind === 'too_large'">
           文件过大（{{ err.error.size_mb.toFixed(0) }} MB &gt; {{ err.error.limit_mb }} MB），
           已拒绝解压。请确认磁盘空间足够后再试：
-          <n-space style="margin-top: 8px">
+          <n-space class="mt-2">
             <n-button
               type="warning"
               @click="onRetryLarge(err)"
@@ -114,7 +116,7 @@ function rarErrorTitle(kind: RarError["kind"]): string {
       </n-alert>
     </div>
 
-    <h3 style="margin-top: 16px">
+    <h3 class="mt-4">
       待处理冲突 ({{ store.conflicts.length }})
     </h3>
 
@@ -128,14 +130,14 @@ function rarErrorTitle(kind: RarError["kind"]): string {
           <n-thing>
             <template #header>
               <n-tag type="warning" size="small">conflict</n-tag>
-              <span style="margin-left: 8px">{{ c.b_filename }}</span>
+              <span class="ml-2">{{ c.b_filename }}</span>
             </template>
             <template #description>
-              <div style="color: #aaa; font-size: 12px">
+              <div class="text-caption text-silver-mist">
                 已在库中: <strong>{{ c.a_title }}</strong>
                 (id={{ c.a_file_id }})
               </div>
-              <div style="color: #888; font-size: 11px">
+              <div class="break-all font-mono text-[11px] text-smoke">
                 {{ c.b_file_path }}
               </div>
             </template>
@@ -165,7 +167,7 @@ function rarErrorTitle(kind: RarError["kind"]): string {
       :show="pendingConfirm !== null"
       preset="card"
       title="确认解压较大文件"
-      style="max-width: 480px"
+      class="max-w-[480px]"
       :mask-closable="false"
       @close="cancelConfirm"
     >
@@ -175,7 +177,7 @@ function rarErrorTitle(kind: RarError["kind"]): string {
           体积 {{ pendingConfirm.error.size_mb.toFixed(0) }} MB，
           接近系统承受上限（1024 MB）。
         </p>
-        <p style="color: #aaa; font-size: 13px">
+        <p class="text-[13px] text-silver-mist">
           解压到 identified 目录会先占用临时空间（自动清理），请确认目标盘剩余空间足够。
         </p>
       </template>
@@ -188,41 +190,3 @@ function rarErrorTitle(kind: RarError["kind"]): string {
     </n-modal>
   </div>
 </template>
-
-<style scoped>
-.page-header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--spacing-16);
-}
-.page-header h1 {
-  font-size: var(--text-heading-sm);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-snow);
-  letter-spacing: var(--tracking-body);
-}
-.page-header .count {
-  font-size: var(--text-caption);
-  color: var(--color-smoke);
-  letter-spacing: 0.1em;
-}
-.section {
-  margin-bottom: var(--spacing-32);
-}
-.section-title {
-  font-size: var(--text-caption);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-smoke);
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  margin-bottom: var(--spacing-8);
-}
-.hint {
-  color: var(--color-silver-mist);
-  font-size: var(--text-body-sm);
-  line-height: var(--leading-body-sm);
-  padding: var(--spacing-16) 0;
-  border-bottom: 1px solid var(--surface-border);
-}
-</style>
