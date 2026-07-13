@@ -1,4 +1,4 @@
-﻿pub mod commands;
+pub mod commands;
 pub mod config;
 pub mod db;
 pub mod error;
@@ -6,8 +6,8 @@ pub mod http;
 pub mod models;
 pub mod services;
 
-use std::sync::{Arc, RwLock};
 use sea_orm::DatabaseConnection;
+use std::sync::{Arc, RwLock};
 
 pub struct AppState {
     pub conn: DatabaseConnection,
@@ -42,10 +42,6 @@ pub async fn run(cfg: config::AppConfig, conn: DatabaseConnection) {
         )
         .await,
     );
-
-    if let Err(e) = scanner.start_watcher() {
-        eprintln!("failed to start watcher: {:?}", e);
-    }
 
     // V3: spawn the dirty-data scanner in the background. Single sweep
     // on startup; cheap enough to run synchronously without blocking
@@ -169,6 +165,9 @@ pub async fn run(cfg: config::AppConfig, conn: DatabaseConnection) {
                 let scanner = scanner.clone();
                 tauri::async_runtime::spawn(async move {
                     scanner.set_app_handle(handle).await;
+                    if let Err(e) = scanner.start_watcher() {
+                        tracing::error!("failed to start watcher: {:?}", e);
+                    }
                 });
                 Ok(())
             }
@@ -194,6 +193,7 @@ pub async fn run(cfg: config::AppConfig, conn: DatabaseConnection) {
             commands::inbox::resolve_conflict,
             commands::dirty::list_dirty,
             commands::settings::get_settings,
+            commands::settings::get_scan_status,
             commands::settings::manual_scan,
             commands::settings::regenerate_auth_token,
             commands::settings::set_http_port,

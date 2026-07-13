@@ -1,10 +1,19 @@
 use anyhow::Result;
 use sea_orm::DatabaseConnection;
+use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tauri::AppHandle;
 use tauri::Emitter;
 use tokio::sync::Mutex;
+
+#[derive(Debug, Clone, Default, Serialize, PartialEq, Eq)]
+pub struct ScanStatus {
+    pub is_scanning: bool,
+    pub processed: usize,
+    pub total: usize,
+    pub failed: usize,
+}
 
 #[derive(Clone)]
 pub struct Scanner {
@@ -14,6 +23,7 @@ pub struct Scanner {
     pub identified_dir: Arc<PathBuf>,
     pub state: Arc<Mutex<ScannerState>>,
     pub app_handle: Arc<Mutex<Option<AppHandle>>>,
+    scan_guard: Arc<Mutex<()>>,
 }
 
 #[derive(Default)]
@@ -21,6 +31,7 @@ pub struct ScannerState {
     pub last_scan_count: usize,
     pub last_scan_at: Option<chrono::DateTime<chrono::Utc>>,
     pub is_watching: bool,
+    pub scan_status: ScanStatus,
 }
 
 impl Scanner {
@@ -37,6 +48,7 @@ impl Scanner {
             identified_dir: Arc::new(identified_dir),
             state: Arc::new(Mutex::new(ScannerState::default())),
             app_handle: Arc::new(Mutex::new(None)),
+            scan_guard: Arc::new(Mutex::new(())),
         }
     }
 
@@ -44,40 +56,66 @@ impl Scanner {
         *self.app_handle.lock().await = Some(handle);
     }
 
+    pub async fn status(&self) -> ScanStatus {
+        self.state.lock().await.scan_status.clone()
+    }
+
+    async fn update_scan_status(&self, status: ScanStatus) {
+        self.state.lock().await.scan_status = status.clone();
+        if let Some(handle) = self.app_handle.lock().await.clone() {
+            let _ = handle.emit("scanner-status", status);
+        }
+    }
+
     pub async fn scan_inbox_once(&self) -> Result<usize> {
-        let mut processed = 0usize;
+        let _scan_guard = self.scan_guard.lock().await;
+        let mut candidates = Vec::new();
         let mut entries = tokio::fs::read_dir(&*self.inbox_dir).await?;
-        while let Some(e) = entries.next_entry().await? {
-            let p = e.path();
-            if !is_candidate(&p) {
-                continue;
+        while let Some(entry) = entries.next_entry().await? {
+            let path = entry.path();
+            if is_candidate(&path) {
+                candidates.push(path);
             }
+        }
+        if candidates.is_empty() {
+            return Ok(0);
+        }
+
+        let mut status = ScanStatus {
+            is_scanning: true,
+            processed: 0,
+            total: candidates.len(),
+            failed: 0,
+        };
+        self.update_scan_status(status.clone()).await;
+
+        for path in candidates {
             let outcome = crate::services::identifier::identify_file(
                 &self.conn,
-                &p,
+                &path,
                 &self.covers_dir,
                 &self.identified_dir,
                 None,
                 false,
             )
             .await
-            .unwrap_or_else(|e| {
+            .unwrap_or_else(|error| {
                 use crate::services::identifier::IdentifyOutcome;
-                tracing::error!(error = %e, "identify_file failed");
-                let is_rar = p
+                tracing::error!(error = %error, "identify_file failed");
+                let is_rar = path
                     .extension()
                     .and_then(|s| s.to_str())
                     .map(|s| s.eq_ignore_ascii_case("rar"))
                     .unwrap_or(false);
                 if is_rar {
-                    if let Some(payload) = e.to_rar_payload() {
+                    if let Some(payload) = error.to_rar_payload() {
                         if let Ok(handle_guard) = self.app_handle.try_lock() {
                             if let Some(handle) = handle_guard.clone() {
                                 let _ = handle.emit(
                                     "rar-error",
                                     serde_json::json!({
-                                        "filename": p.file_name().and_then(|n| n.to_str()).unwrap_or(""),
-                                        "file_path": p.to_string_lossy(),
+                                        "filename": path.file_name().and_then(|n| n.to_str()).unwrap_or(""),
+                                        "file_path": path.to_string_lossy(),
                                         "error": payload,
                                     }),
                                 );
@@ -85,22 +123,32 @@ impl Scanner {
                         }
                     }
                 }
-                IdentifyOutcome::Error(e.to_string())
+                IdentifyOutcome::Error(error.to_string())
             });
+            if matches!(
+                outcome,
+                crate::services::identifier::IdentifyOutcome::Error(_)
+            ) {
+                status.failed += 1;
+            }
             log_outcome(&outcome);
-            processed += 1;
+            status.processed += 1;
+            self.update_scan_status(status.clone()).await;
         }
-        let mut st = self.state.lock().await;
-        st.last_scan_count = processed;
-        st.last_scan_at = Some(chrono::Utc::now());
-        drop(st);
 
-        // Notify frontend (best-effort)
+        status.is_scanning = false;
+        {
+            let mut state = self.state.lock().await;
+            state.last_scan_count = status.processed;
+            state.last_scan_at = Some(chrono::Utc::now());
+            state.scan_status = status.clone();
+        }
         if let Some(handle) = self.app_handle.lock().await.clone() {
-            let _ = handle.emit("library-updated", processed);
+            let _ = handle.emit("scanner-status", status.clone());
+            let _ = handle.emit("library-updated", status.processed);
         }
 
-        Ok(processed)
+        Ok(status.processed)
     }
 
     pub fn start_watcher(&self) -> Result<()> {
@@ -118,9 +166,15 @@ impl Scanner {
                     return;
                 }
             };
-            if let Err(e) = debouncer.watcher().watch(&*inbox, RecursiveMode::NonRecursive) {
+            if let Err(e) = debouncer
+                .watcher()
+                .watch(&*inbox, RecursiveMode::NonRecursive)
+            {
                 tracing::error!("watch error: {:?}", e);
                 return;
+            }
+            if let Err(e) = rt.block_on(scanner.scan_inbox_once()) {
+                tracing::error!("startup inbox scan failed: {:?}", e);
             }
             for res in rx {
                 if res.is_ok() {
@@ -150,5 +204,70 @@ fn log_outcome(outcome: &crate::services::identifier::IdentifyOutcome) {
         NewIdentified(id) => tracing::info!(id, "new file identified"),
         Conflict { a_id, .. } => tracing::warn!(a_id, "conflict detected"),
         Error(e) => tracing::error!(error = e, "identify failed"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::{self, migrations};
+
+    async fn build_scanner(root: &Path) -> Scanner {
+        let inbox = root.join("inbox");
+        let covers = root.join("covers");
+        let identified = root.join("identified");
+        std::fs::create_dir_all(&inbox).unwrap();
+        std::fs::create_dir_all(&covers).unwrap();
+        std::fs::create_dir_all(&identified).unwrap();
+        let conn = db::connect(&root.join("test.db")).await.unwrap();
+        migrations::init_schema_versioned(&conn).await.unwrap();
+        Scanner::new(conn, inbox, covers, identified).await
+    }
+
+    #[tokio::test]
+    async fn empty_scan_keeps_status_hidden() {
+        let dir = tempfile::tempdir().unwrap();
+        let scanner = build_scanner(dir.path()).await;
+
+        assert_eq!(scanner.scan_inbox_once().await.unwrap(), 0);
+        assert_eq!(scanner.status().await, ScanStatus::default());
+    }
+
+    #[tokio::test]
+    async fn invalid_zip_counts_as_failed_and_finishes() {
+        let dir = tempfile::tempdir().unwrap();
+        let scanner = build_scanner(dir.path()).await;
+        std::fs::write(scanner.inbox_dir.join("broken.zip"), b"not a zip").unwrap();
+
+        assert_eq!(scanner.scan_inbox_once().await.unwrap(), 1);
+        assert_eq!(
+            scanner.status().await,
+            ScanStatus {
+                is_scanning: false,
+                processed: 1,
+                total: 1,
+                failed: 1,
+            }
+        );
+    }
+
+    #[test]
+    fn scan_status_serializes_for_frontend() {
+        let status = ScanStatus {
+            is_scanning: true,
+            processed: 3,
+            total: 12,
+            failed: 1,
+        };
+
+        assert_eq!(
+            serde_json::to_value(status).unwrap(),
+            serde_json::json!({
+                "is_scanning": true,
+                "processed": 3,
+                "total": 12,
+                "failed": 1,
+            })
+        );
     }
 }

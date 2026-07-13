@@ -1,7 +1,8 @@
-use crate::AppState;
 use crate::db;
-use crate::http::Port;
 use crate::error::AppResult;
+use crate::http::Port;
+use crate::services::scanner::ScanStatus;
+use crate::AppState;
 use serde::Serialize;
 use tauri::State;
 
@@ -39,7 +40,11 @@ pub async fn get_settings(
         resources_dir: state.config.resources_dir.to_string_lossy().into_owned(),
         inbox_dir: state.config.inbox_dir().to_string_lossy().into_owned(),
         identified_dir: state.config.identified_dir().to_string_lossy().into_owned(),
-        will_delete_dir: state.config.will_delete_dir().to_string_lossy().into_owned(),
+        will_delete_dir: state
+            .config
+            .will_delete_dir()
+            .to_string_lossy()
+            .into_owned(),
         covers_dir: state.config.covers_dir().to_string_lossy().into_owned(),
         api_url: format!("http://127.0.0.1:{}", **port),
         scanner_watching: true,
@@ -51,6 +56,11 @@ pub async fn get_settings(
         http_port: **port,
         http_port_locked,
     })
+}
+
+#[tauri::command]
+pub async fn get_scan_status(state: State<'_, AppState>) -> AppResult<ScanStatus> {
+    Ok(state.scanner.status().await)
 }
 
 #[tauri::command]
