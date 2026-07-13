@@ -38,9 +38,6 @@ resources/_preview_cache/
 resources/doujinshi-identified/*
 resources/doujinshi-will-delete/*
 resources/doujinshi-archived/*
-!resources/doujinshi-identified/.gitkeep
-!resources/doujinshi-will-delete/.gitkeep
-!resources/doujinshi-archived/.gitkeep
 resources/doujinshi/*.zip
 resources/doujinshi/*.rar
 src-tauri/gen/
@@ -55,4 +52,8 @@ src-tauri/gen/
 opencode.jsonc
 bash.exe.stackdump
 .claude/settings.local.json
+
+# Python bytecode cache (wipe_data.py + future scripts)
+__pycache__/
+*.pyc
 
