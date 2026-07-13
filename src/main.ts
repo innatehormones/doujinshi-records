@@ -4,14 +4,19 @@ import naive from "naive-ui"
 import App from "./App.vue"
 import router from "./router"
 import { listen } from "@tauri-apps/api/event"
-import { useLibraryStore, useRecycleStore, useInboxStore } from "@/stores"
+import { useLibraryStore, useRecycleStore, useInboxStore, useThemeStore } from "@/stores"
 import type { RarErrorEntry } from "@/types/api"
 import "./styles/base.css"
 
+const pinia = createPinia()
 const app = createApp(App)
-app.use(createPinia())
+app.use(pinia)
 app.use(router)
 app.use(naive)
+
+// 主题必须在 mount 前 init()——避免首次渲染先走 :root 默认 dark，
+// 再被 data-theme='light' 切到亮色，导致闪一下。
+useThemeStore().init()
 app.mount("#app")
 
 // Live-update: backend scanner emits "library-updated" after every scan.
