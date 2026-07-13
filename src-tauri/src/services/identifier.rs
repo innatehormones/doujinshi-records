@@ -140,11 +140,16 @@ pub async fn identify_file(
         .await?
     {
         if existing.current_location == "identified" {
-            // 已在 identified：仅刷新 filename + alias（V2 行为）。
+            // 同 hash 已存在且在 identified：inbox 副本是冗余的，不应该
+            // 进入 identified 也不应该触发冲突（否则就退化成 step 4 的
+            // name+ext 检查）。直接把 inbox 的副本删掉，仅刷 alias +
+            // filename + updated_at，current_path 仍指原 identified
+            // 副本——否则 dirty_scanner 会把原来的 identified/[...].zip
+            // 误判为孤儿。
             store_alias(conn, existing.id, &filename).await?;
+            let _ = std::fs::remove_file(file_path);
             let mut am: doujinshi_file::ActiveModel = existing.clone().into();
             am.filename = Set(filename);
-            am.current_path = Set(file_path.to_string_lossy().into_owned());
             am.updated_at = Set(chrono::Utc::now());
             am.update(conn).await?;
         } else {
