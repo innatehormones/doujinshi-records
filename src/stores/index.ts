@@ -20,7 +20,7 @@ export const useSettingsStore = defineStore("settings", () => {
 /// 跟随系统偏好，再读不到则默认 dark（与现有设计对齐）。
 ///
 /// 切换流程：toggle() 写 isDark + localStorage + 切 document.documentElement
-/// 的 data-theme 属性，theme.css 的 :root[data-theme='light'] 立刻接管
+/// 的 data-theme 属性，tailwind.css 的 :root[data-theme='light'] 立刻接管
 /// 所有 CSS 变量。Naive UI 组件色由 App.vue 配合
 /// `buildThemeOverrides(isDark)` 同步生效。
 export const useThemeStore = defineStore("theme", () => {

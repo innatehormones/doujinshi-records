@@ -4,7 +4,7 @@ import type { GlobalThemeOverrides } from "naive-ui"
  * Naive UI 组件级 token 双主题覆盖：根据 isDark 切换文字/容器/边框色，
  * primary 与 phosphor-green 保持一致（品牌色不随主题变）。
  *
- * CSS 变量层面的主题切换见 theme.css 的 :root[data-theme='light']，
+ * CSS 变量层面的主题切换见 tailwind.css 的 :root[data-theme='light']，
  * 本文件负责 Naive UI 组件内部色（NCard / NInput / NMenu 等）。
  */
 export function buildThemeOverrides(isDark: boolean): GlobalThemeOverrides {

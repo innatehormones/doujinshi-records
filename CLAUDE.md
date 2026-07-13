@@ -15,7 +15,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## 技术栈
 
 - **后端**：Rust（stable，rustfmt + clippy）+ Tauri 2 + SeaORM 1.1（SQLite）+ Axum 0.7 + notify-debouncer-full 0.3 + BLAKE3 + lru 0.12 + webp 0.3
-- **前端**：Vue 3 + TypeScript + Naive UI + Pinia + Vue Router
+- **前端**：Vue 3 + TypeScript + Naive UI + Tailwind CSS 4（Vite 插件 + `@theme` token）+ Pinia + Vue Router
 - **包管理**：pnpm 10 workspace（单包），依赖在根目录 `package.json`
 - **平台**：Windows 10/11（Tauri 2 WebView2）
 
