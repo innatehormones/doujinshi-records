@@ -75,10 +75,6 @@ const naiveTheme = computed(() => (themeStore.isDark ? darkTheme : lightTheme))
           :native-scrollbar="false"
           :show-trigger="false"
         >
-          <div class="sider-top" aria-hidden="true">
-            <span class="brand-mark"></span>
-          </div>
-
           <n-menu
             class="app-menu"
             :value="activeKey"
@@ -145,22 +141,6 @@ const naiveTheme = computed(() => (themeStore.isDark ? darkTheme : lightTheme))
 }
 .app-sider :deep(.n-menu-item-content__icon) {
   margin-right: 0;
-}
-
-.sider-top {
-  height: 56px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  border-bottom: 1px solid var(--surface-border);
-}
-.brand-mark {
-  width: 10px;
-  height: 10px;
-  border-radius: 9999px;
-  background: var(--color-phosphor-green);
-  box-shadow: 0 0 12px var(--color-phosphor-green);
-  flex-shrink: 0;
 }
 
 .app-menu {

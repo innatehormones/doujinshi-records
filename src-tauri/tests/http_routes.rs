@@ -961,8 +961,37 @@ async fn list_dirty_returns_empty_when_no_orphans() {
         .unwrap();
     assert_eq!(resp.status(), StatusCode::OK);
     let body = resp.into_body().collect().await.unwrap().to_bytes();
-    let arr: serde_json::Value = serde_json::from_slice(&body).unwrap();
-    assert!(arr.as_array().unwrap().is_empty());
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["total"].as_u64().unwrap(), 0);
+    assert!(v["items"].as_array().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn list_dirty_respects_limit_offset() {
+    // 灌 5 条，取第二页（offset=2, limit=2）：items 长度应为 2，total=5。
+    use doujinshi_records::db::entities::dirty_data;
+    use sea_orm::Set;
+    let h = build_state().await;
+    for i in 0..5 {
+        let am = dirty_data::ActiveModel {
+            file_path: Set(format!("/tmp/orphan_{}.zip", i)),
+            reason: Set("orphan_file".into()),
+            first_seen_at: Set(chrono::Utc::now().to_rfc3339()),
+            detected_dir: Set("identified".into()),
+            file_size: Set(0),
+            ..Default::default()
+        };
+        am.insert(&h.state.conn).await.unwrap();
+    }
+    let resp = router(h.state)
+        .oneshot(authed_request("GET", "/api/dirty?limit=2&offset=2"))
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let body = resp.into_body().collect().await.unwrap().to_bytes();
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["total"].as_u64().unwrap(), 5);
+    assert_eq!(v["items"].as_array().unwrap().len(), 2);
 }
 
 #[tokio::test]

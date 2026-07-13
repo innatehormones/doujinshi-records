@@ -2,7 +2,7 @@
 import { onMounted, ref } from "vue"
 import { useRouter } from "vue-router"
 import {
-  NSpin, NEmpty, NDivider, useMessage,
+  NSpin, NEmpty, NDivider, NPagination, useMessage,
 } from "naive-ui"
 import { Trash2, RotateCcw, X } from "@lucide/vue"
 import { useRecycleStore, useSettingsStore } from "@/stores"
@@ -83,20 +83,20 @@ function fmtSize(bytes: number): string {
     <header class="flex items-baseline justify-between gap-4">
       <h1 class="text-heading-sm font-medium text-snow tracking-body">回收站</h1>
       <span class="font-mono text-caption text-smoke tracking-[0.1em]">
-        {{ store.present.length + store.gone.length }} 条
+        共 {{ store.presentTotal + store.goneTotal }} 条
       </span>
     </header>
     <n-spin :show="store.loading">
       <section>
         <h2 class="text-subheading font-medium text-snow tracking-body">
-          待删除文件 ({{ store.present.length }})
+          待删除文件 ({{ store.presentTotal }})
         </h2>
         <p class="mt-2 text-caption leading-[1.5] text-silver-mist">
           这里的文件已经移出已识别库，但仍占用硬盘空间。「永久删除」会把文件从硬盘移除；「还原」会让文件回到库内。两种操作都会保留数据记录。
         </p>
 
         <n-empty
-          v-if="!store.loading && store.present.length === 0"
+          v-if="!store.loading && store.presentTotal === 0"
           description="回收站为空。"
           class="mt-4"
         />
@@ -108,11 +108,12 @@ function fmtSize(bytes: number): string {
           <article
             v-for="f in store.present"
             :key="f.id"
+            v-memo="[f.id, f.has_physical_file]"
             class="relative flex flex-col overflow-hidden rounded-cards border border-border bg-card transition-[border-color,transform] duration-150 hover:border-slate"
             @click="onCardOpen(f.id)"
           >
             <div class="relative aspect-[3/4] overflow-hidden border-b border-border bg-obsidian-deep">
-              <img v-if="f.cover_url" :src="coverUrl(f)" alt="" class="size-full object-cover" />
+              <img v-if="f.cover_url" :src="coverUrl(f)" alt="" loading="lazy" class="size-full object-cover" />
               <div
                 v-else
                 class="flex size-full items-center justify-center font-mono text-caption uppercase tracking-[0.1em] text-smoke"
@@ -155,19 +156,28 @@ function fmtSize(bytes: number): string {
             </div>
           </article>
         </div>
+
+        <div v-if="store.showPresentPager" class="mt-6 flex justify-center">
+          <n-pagination
+            :page="store.presentPage"
+            :page-count="store.presentTotalPages"
+            :page-slot="5"
+            @update:page="store.gotoPresentPage"
+          />
+        </div>
       </section>
 
       <n-divider />
 
       <section>
         <h2 class="text-subheading font-medium text-snow tracking-body">
-          已从硬盘删除 ({{ store.gone.length }})
+          已从硬盘删除 ({{ store.goneTotal }})
         </h2>
         <p class="mt-2 text-caption leading-[1.5] text-silver-mist">
           数据记录保留供搜索 / 外部工具使用。这里的文件无法再还原。
         </p>
         <n-empty
-          v-if="store.gone.length === 0"
+          v-if="store.goneTotal === 0"
           description="暂无已删除记录。"
           size="small"
           class="mt-4"
@@ -176,6 +186,7 @@ function fmtSize(bytes: number): string {
           <article
             v-for="f in store.gone"
             :key="f.id"
+            v-memo="[f.id]"
             class="flex items-center gap-3 rounded-cards border border-border bg-card p-4"
           >
             <span
@@ -191,6 +202,15 @@ function fmtSize(bytes: number): string {
               </span>
             </div>
           </article>
+        </div>
+
+        <div v-if="store.showGonePager" class="mt-6 flex justify-center">
+          <n-pagination
+            :page="store.gonePage"
+            :page-count="store.goneTotalPages"
+            :page-slot="5"
+            @update:page="store.gotoGonePage"
+          />
         </div>
       </section>
 

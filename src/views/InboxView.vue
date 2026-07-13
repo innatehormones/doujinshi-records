@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue"
 import {
-  NTag, NSpace, NButton, NSpin, NEmpty, NAlert, NModal,
+  NTag, NSpace, NButton, NSpin, NEmpty, NAlert, NModal, NPagination,
 } from "naive-ui"
 import { useInboxStore } from "@/stores"
 import type { RarErrorEntry, RarError } from "@/types/api"
@@ -59,7 +59,7 @@ function rarErrorTitle(kind: RarError["kind"]): string {
     <header class="flex items-baseline justify-between gap-4">
       <h1 class="text-heading-sm font-medium text-snow tracking-body">冲突处理</h1>
       <span class="font-mono text-caption text-smoke tracking-[0.1em]">
-        {{ store.conflicts.length }} 个待处理
+        共 {{ store.total }} 个待处理
       </span>
     </header>
     <div class="rounded-cards border border-border bg-card px-5 py-4">
@@ -118,7 +118,7 @@ function rarErrorTitle(kind: RarError["kind"]): string {
     </div>
 
     <h2 class="text-subheading font-medium text-snow tracking-body">
-      待处理冲突 ({{ store.conflicts.length }})
+      待处理冲突 ({{ store.total }})
     </h2>
 
     <n-spin :show="store.loading">
@@ -130,6 +130,7 @@ function rarErrorTitle(kind: RarError["kind"]): string {
         <article
           v-for="c in store.conflicts"
           :key="c.id"
+          v-memo="[c.id]"
           class="flex items-start gap-4 rounded-cards border border-border bg-card p-4"
         >
           <div class="flex min-w-0 flex-1 flex-col gap-1.5">
@@ -162,6 +163,15 @@ function rarErrorTitle(kind: RarError["kind"]): string {
             </n-button>
           </div>
         </article>
+      </div>
+
+      <div v-if="store.showPager" class="mt-6 flex justify-center">
+        <n-pagination
+          :page="store.page"
+          :page-count="store.totalPages"
+          :page-slot="5"
+          @update:page="store.gotoPage"
+        />
       </div>
     </n-spin>
 

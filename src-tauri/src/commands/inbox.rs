@@ -1,7 +1,11 @@
 use crate::db::entities::{conflict, doujinshi_file};
 use crate::error::AppResult;
+use crate::models::Page;
 use crate::AppState;
-use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, QueryFilter,
+    QuerySelect, Set,
+};
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use tauri::State;
@@ -17,18 +21,27 @@ pub struct ConflictItem {
 }
 
 #[tauri::command]
-pub async fn list_conflicts(state: State<'_, AppState>) -> AppResult<Vec<ConflictItem>> {
-    let rows = conflict::Entity::find()
-        .filter(conflict::Column::Resolved.eq(false))
+pub async fn list_conflicts(
+    state: State<'_, AppState>,
+    limit: Option<u64>,
+    offset: Option<u64>,
+) -> AppResult<Page<ConflictItem>> {
+    let limit = limit.unwrap_or(50);
+    let offset = offset.unwrap_or(0);
+    let q = conflict::Entity::find().filter(conflict::Column::Resolved.eq(false));
+    let total = q.clone().count(&state.conn).await?;
+    let rows = q
+        .offset(offset)
+        .limit(limit)
         .all(&state.conn)
         .await?;
-    let mut out = Vec::with_capacity(rows.len());
+    let mut items = Vec::with_capacity(rows.len());
     for c in rows {
         let a = doujinshi_file::Entity::find_by_id(c.a_file_id)
             .one(&state.conn)
             .await?;
         let a_title = a.map(|m| m.title).unwrap_or_default();
-        out.push(ConflictItem {
+        items.push(ConflictItem {
             id: c.id,
             a_file_id: c.a_file_id,
             a_title,
@@ -37,7 +50,7 @@ pub async fn list_conflicts(state: State<'_, AppState>) -> AppResult<Vec<Conflic
             created_at: c.created_at.to_rfc3339(),
         });
     }
-    Ok(out)
+    Ok(Page { items, total })
 }
 
 /// What the user decided to do with a name+ext collision. Mapped 1:1

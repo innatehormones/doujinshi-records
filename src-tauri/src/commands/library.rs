@@ -1,9 +1,12 @@
 use crate::db::entities::doujinshi_file;
 use crate::error::{AppError, AppResult};
-use crate::models::file_summary;
+use crate::models::{file_summary, Page};
 use crate::AppState;
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, QueryOrder, QuerySelect, Set};
-use serde::Deserialize;
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QueryOrder, QuerySelect,
+    Set,
+};
+use serde::{Deserialize, Serialize};
 use tauri::State;
 
 #[tauri::command]
@@ -13,7 +16,7 @@ pub async fn list_library(
     location: Option<String>,
     limit: Option<u64>,
     offset: Option<u64>,
-) -> AppResult<Vec<file_summary::FileSummary>> {
+) -> AppResult<Page<file_summary::FileSummary>> {
     let conn = &state.conn;
     let mut query = doujinshi_file::Entity::find();
     if let Some(loc) = location.as_deref().filter(|s| !s.is_empty() && *s != "all") {
@@ -31,18 +34,64 @@ pub async fn list_library(
                 .or(doujinshi_file::Column::Filename.like(&pattern)),
         );
     }
+    let limit = limit.unwrap_or(50);
+    let offset = offset.unwrap_or(0);
+    let total = query.clone().count(conn).await?;
     let rows = query
         .order_by_desc(doujinshi_file::Column::CreatedAt)
-        .limit(limit.unwrap_or(50))
-    .offset(offset.unwrap_or(0))
+        .limit(limit)
+        .offset(offset)
         .all(conn)
         .await?;
     let ids: Vec<i64> = rows.iter().map(|m| m.id).collect();
     let conflict_map = file_summary::open_conflict_map(conn, &ids).await;
+    let items: Vec<file_summary::FileSummary> = rows
+        .iter()
+        .map(|m| {
+            let has = conflict_map.get(&m.id).copied().unwrap_or(false);
+            file_summary::from_model_with_conflict_state(m, has)
+        })
+        .collect();
+    Ok(Page { items, total })
+}
+
+/// Library 页顶部社团快捷筛选。独立端点而不是从 list_library 取——
+/// 那是按 limit/offset 切片的子集，按它聚合只算"当前页 top"，误导用户。
+/// 全表按出现次数排序，方便"我主要跟的几个社团"快速过滤。
+#[derive(Debug, Serialize)]
+pub struct CircleCount {
+    pub circle: String,
+    pub count: u64,
+}
+
+#[tauri::command]
+pub async fn top_circles(
+    state: State<'_, AppState>,
+    limit: Option<u64>,
+) -> AppResult<Vec<CircleCount>> {
+    use sea_orm::{DbBackend, Statement};
+    use sea_orm::ConnectionTrait;
+    let limit = limit.unwrap_or(10);
+    // SQL 侧 GROUP BY + ORDER BY + LIMIT 一次搞定；驱动侧 group_by 海量
+    // 字符串开销不小，而且我们其实只关心前 N。
+    let stmt = Statement::from_string(
+        DbBackend::Sqlite,
+        format!(
+            "SELECT circle, COUNT(*) as cnt FROM doujinshi_file \
+             WHERE circle IS NOT NULL AND circle != '' \
+             GROUP BY circle ORDER BY cnt DESC LIMIT {}",
+            limit
+        ),
+    );
+    let rows = state.conn.query_all(stmt).await?;
     let mut out = Vec::with_capacity(rows.len());
-    for m in rows {
-        let has = conflict_map.get(&m.id).copied().unwrap_or(false);
-        out.push(file_summary::from_model_with_conflict_state(&m, has));
+    for r in rows {
+        let circle: String = r.try_get_by("circle").unwrap_or_default();
+        let count: i64 = r.try_get_by("cnt").unwrap_or(0);
+        if circle.is_empty() {
+            continue;
+        }
+        out.push(CircleCount { circle, count: count.max(0) as u64 });
     }
     Ok(out)
 }

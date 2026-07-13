@@ -2,7 +2,26 @@ import { defineStore } from "pinia"
 import { ref, computed, watch } from "vue"
 import { api } from "@/api/tauri"
 import { fetchCompare, fetchDetailImages, patchMetadata } from "@/api/http"
-import type { FileSummary, SettingsView, ConflictItem, ConflictCompare, ConflictAction, DetailImagesResponse, MetadataPatch, RarErrorEntry, DirtyEntry } from "@/types/api"
+import type {
+  FileSummary,
+  SettingsView,
+  ConflictItem,
+  ConflictCompare,
+  ConflictAction,
+  DetailImagesResponse,
+  MetadataPatch,
+  RarErrorEntry,
+  DirtyEntry,
+  CircleCount,
+} from "@/types/api"
+
+/// Library 页分页大小。第一页 <= 24 时隐藏分页器（用户多看一两个就是
+/// "我库就这么大"，分页器只是噪音）。24 是经验值——sider 64px 加内容区
+/// 至少能塞 3 列，每列 ≤ 8 行（3:4 比例）的总和正好 ~24。
+export const LIBRARY_PAGE_SIZE = 24
+export const RECYCLE_PAGE_SIZE = 24
+export const INBOX_PAGE_SIZE = 50
+export const DIRTY_PAGE_SIZE = 50
 
 export const useSettingsStore = defineStore("settings", () => {
   const data = ref<SettingsView | null>(null)
@@ -58,6 +77,8 @@ export const useThemeStore = defineStore("theme", () => {
 
 export const useLibraryStore = defineStore("library", () => {
   const items = ref<FileSummary[]>([])
+  const total = ref(0)
+  const page = ref(1)
   // User input vs debounced version — keep `queryInput` for v-model
   // and let `query` track what the last completed search was. UI binds
   // to `queryInput` via setQuery/getQuery so we can debounce internally
@@ -68,6 +89,15 @@ export const useLibraryStore = defineStore("library", () => {
     null | "identified" | "will_delete" | "archived" | "physically_deleted"
   >(null)
   const loading = ref(false)
+  /// 顶部社团 chip——单独调用 top_circles，不从当前页 items 聚合（聚合只算
+  /// "当前页 top" 误导用户）。全表 GROUP BY 排序，每次 load 与翻页各自刷。
+  const topCircles = ref<CircleCount[]>([])
+
+  const totalPages = computed(() =>
+    Math.max(1, Math.ceil(total.value / LIBRARY_PAGE_SIZE)),
+  )
+  /// 仅 1 页时隐藏分页器（按用户偏好："第一页少于等于 24 时不显示分页器"）。
+  const showPager = computed(() => totalPages.value > 1)
 
   let debounceTimer: number | undefined
   watch(queryInput, (v) => {
@@ -80,13 +110,31 @@ export const useLibraryStore = defineStore("library", () => {
   async function load() {
     loading.value = true
     try {
-      items.value = await api.listLibrary(
-        query.value || undefined,
-        locationFilter.value ?? undefined,
-      )
+      const offset = (page.value - 1) * LIBRARY_PAGE_SIZE
+      const [pageRes, circlesRes] = await Promise.all([
+        api.listLibrary(
+          query.value || undefined,
+          locationFilter.value ?? undefined,
+          LIBRARY_PAGE_SIZE,
+          offset,
+        ),
+        // 全表社团 top 不带任何过滤——chip 是库级别的导航，列表查询变化
+        // 不应改变 chip 集合（用户期望"我长期跟的几个社团"固定）。
+        api.topCircles(10),
+      ])
+      items.value = pageRes.items
+      total.value = pageRes.total
+      topCircles.value = circlesRes
     } finally {
       loading.value = false
     }
+  }
+
+  async function gotoPage(p: number) {
+    const target = Math.min(Math.max(1, p), totalPages.value)
+    if (target === page.value) return
+    page.value = target
+    await load()
   }
 
   async function archive(id: number) {
@@ -123,20 +171,6 @@ export const useLibraryStore = defineStore("library", () => {
     await load()
   }
 
-  /// Top 10 circles (by file count) for the chip bar. Circles with
-  /// no `circle` field are skipped — LibraryView only shows real tags.
-  const topCircles = computed(() => {
-    const counts = new Map<string, number>()
-    for (const f of items.value) {
-      if (!f.circle) continue
-      counts.set(f.circle, (counts.get(f.circle) ?? 0) + 1)
-    }
-    return Array.from(counts.entries())
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 10)
-      .map(([name, count]) => ({ name, count }))
-  })
-
   function setQuery(v: string) {
     queryInput.value = v
   }
@@ -146,28 +180,63 @@ export const useLibraryStore = defineStore("library", () => {
   }
 
   return {
-    items, query, locationFilter, loading,
-    load,
+    items, total, page, totalPages, showPager, query, locationFilter, loading,
+    topCircles,
+    load, gotoPage,
     archive, restore, markForDelete, unmarkForDelete, confirmMoveToWillDelete,
     fetchDetailImagesFor, updateMetadataFor,
-    topCircles, setQuery, getQuery,
+    setQuery, getQuery,
   }
 })
 
 export const useRecycleStore = defineStore("recycle", () => {
   const present = ref<FileSummary[]>([])
+  const presentTotal = ref(0)
+  const presentPage = ref(1)
   const gone = ref<FileSummary[]>([])
+  const goneTotal = ref(0)
+  const gonePage = ref(1)
   const loading = ref(false)
+
+  const presentTotalPages = computed(() =>
+    Math.max(1, Math.ceil(presentTotal.value / RECYCLE_PAGE_SIZE)),
+  )
+  const goneTotalPages = computed(() =>
+    Math.max(1, Math.ceil(goneTotal.value / RECYCLE_PAGE_SIZE)),
+  )
+  const showPresentPager = computed(() => presentTotalPages.value > 1)
+  const showGonePager = computed(() => goneTotalPages.value > 1)
 
   async function load() {
     loading.value = true
     try {
-      const [p, g] = await api.listRecycle()
-      present.value = p
-      gone.value = g
+      const presentOffset = (presentPage.value - 1) * RECYCLE_PAGE_SIZE
+      const goneOffset = (gonePage.value - 1) * RECYCLE_PAGE_SIZE
+      const res = await api.listRecycle(
+        RECYCLE_PAGE_SIZE, presentOffset,
+        RECYCLE_PAGE_SIZE, goneOffset,
+      )
+      present.value = res.present.items
+      presentTotal.value = res.present.total
+      gone.value = res.gone.items
+      goneTotal.value = res.gone.total
     } finally {
       loading.value = false
     }
+  }
+
+  async function gotoPresentPage(p: number) {
+    const target = Math.min(Math.max(1, p), presentTotalPages.value)
+    if (target === presentPage.value) return
+    presentPage.value = target
+    await load()
+  }
+
+  async function gotoGonePage(p: number) {
+    const target = Math.min(Math.max(1, p), goneTotalPages.value)
+    if (target === gonePage.value) return
+    gonePage.value = target
+    await load()
   }
 
   async function permanentDelete(id: number) {
@@ -185,35 +254,77 @@ export const useRecycleStore = defineStore("recycle", () => {
     present.value = present.value.filter((f) => f.id !== id)
   }
 
-  return { present, gone, loading, load, permanentDelete, restore }
+  return {
+    present, presentTotal, presentPage, presentTotalPages, showPresentPager,
+    gone, goneTotal, gonePage, goneTotalPages, showGonePager,
+    loading, load,
+    gotoPresentPage, gotoGonePage,
+    permanentDelete, restore,
+  }
 })
 
 export const useDirtyStore = defineStore("dirty", () => {
   const entries = ref<DirtyEntry[]>([])
+  const total = ref(0)
+  const page = ref(1)
   const loading = ref(false)
+
+  const totalPages = computed(() =>
+    Math.max(1, Math.ceil(total.value / DIRTY_PAGE_SIZE)),
+  )
+  const showPager = computed(() => totalPages.value > 1)
+
   async function load() {
     loading.value = true
     try {
-      entries.value = await api.listDirty()
+      const offset = (page.value - 1) * DIRTY_PAGE_SIZE
+      const res = await api.listDirty(DIRTY_PAGE_SIZE, offset)
+      entries.value = res.items
+      total.value = res.total
     } finally {
       loading.value = false
     }
   }
-  return { entries, loading, load }
+
+  async function gotoPage(p: number) {
+    const target = Math.min(Math.max(1, p), totalPages.value)
+    if (target === page.value) return
+    page.value = target
+    await load()
+  }
+
+  return { entries, total, page, totalPages, showPager, loading, load, gotoPage }
 })
 
 export const useInboxStore = defineStore("inbox", () => {
   const conflicts = ref<ConflictItem[]>([])
+  const total = ref(0)
+  const page = ref(1)
   const rarErrors = ref<RarErrorEntry[]>([])
   const loading = ref(false)
+
+  const totalPages = computed(() =>
+    Math.max(1, Math.ceil(total.value / INBOX_PAGE_SIZE)),
+  )
+  const showPager = computed(() => totalPages.value > 1)
 
   async function load() {
     loading.value = true
     try {
-      conflicts.value = await api.listConflicts()
+      const offset = (page.value - 1) * INBOX_PAGE_SIZE
+      const res = await api.listConflicts(INBOX_PAGE_SIZE, offset)
+      conflicts.value = res.items
+      total.value = res.total
     } finally {
       loading.value = false
     }
+  }
+
+  async function gotoPage(p: number) {
+    const target = Math.min(Math.max(1, p), totalPages.value)
+    if (target === page.value) return
+    page.value = target
+    await load()
   }
 
   async function resolve(id: number) {
@@ -260,8 +371,8 @@ export const useInboxStore = defineStore("inbox", () => {
   }
 
   return {
-    conflicts, rarErrors, loading,
-    load, resolve, loadCompare, resolveConflict,
+    conflicts, total, page, totalPages, showPager, rarErrors, loading,
+    load, gotoPage, resolve, loadCompare, resolveConflict,
     dismissRarError, retryExtractLarge, pushRarError,
   }
 })

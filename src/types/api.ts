@@ -93,6 +93,26 @@ export interface SearchResult {
   total: number
 }
 
+/// 通用分页响应：与 Rust `Page<T>` 一一对应。
+/// `limit` 是请求方持有的当前页大小，不必回传——前端 store 内部跟踪。
+export interface Page<T> {
+  items: T[]
+  total: number
+}
+
+/// 回收站首页专属 shape：present（硬盘还有）+ gone（已清走）。
+/// 两段各自独立分页，各自的 total 独立计算。
+export interface RecyclePage {
+  present: Page<FileSummary>
+  gone: Page<FileSummary>
+}
+
+/// Library 顶部社团 chip：按文件数倒序，独立端点而不是从当前页聚合。
+export interface CircleCount {
+  circle: string
+  count: number
+}
+
 /// RAR 处理的错误分类。前端按 kind 渲染不同的卡片：
 /// `unrar_not_installed` 显示下载链接；`too_large` 可弹窗确认；
 /// `insufficient_space` 仅展示；`extraction_failed` 仅展示。

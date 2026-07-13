@@ -1,23 +1,51 @@
 import { invoke } from "@tauri-apps/api/core"
-import type { FileSummary, SettingsView, ConflictItem, ConflictAction, DirtyEntry } from "@/types/api"
+import type {
+  FileSummary,
+  SettingsView,
+  ConflictItem,
+  ConflictAction,
+  DirtyEntry,
+  Page,
+  RecyclePage,
+  CircleCount,
+} from "@/types/api"
 
 export const api = {
-  listLibrary: (q?: string, location?: string) =>
-    invoke<FileSummary[]>("list_library", { q, location }),
+  listLibrary: (
+    q?: string,
+    location?: string,
+    limit?: number,
+    offset?: number,
+  ) =>
+    invoke<Page<FileSummary>>("list_library", { q, location, limit, offset }),
+  topCircles: (limit?: number) =>
+    invoke<CircleCount[]>("top_circles", { limit }),
   getById: (id: number) => invoke<FileSummary>("get_by_id", { id }),
   markForDelete: (id: number) => invoke<void>("mark_for_delete", { id }),
   unmarkForDelete: (id: number) => invoke<void>("unmark_for_delete", { id }),
   moveToWillDelete: (id: number) => invoke<void>("move_to_will_delete", { id }),
   archive: (id: number) => invoke<void>("archive", { id }),
   restore: (id: number) => invoke<void>("restore", { id }),
-  listRecycle: () =>
-    invoke<[FileSummary[], FileSummary[]]>("list_recycle"),
+  listRecycle: (
+    presentLimit?: number,
+    presentOffset?: number,
+    goneLimit?: number,
+    goneOffset?: number,
+  ) =>
+    invoke<RecyclePage>("list_recycle", {
+      presentLimit,
+      presentOffset,
+      goneLimit,
+      goneOffset,
+    }),
   permanentDelete: (id: number) => invoke<void>("permanent_delete", { id }),
   restoreFromRecycle: (id: number) => invoke<void>("restore_from_recycle", { id }),
-  listConflicts: () => invoke<ConflictItem[]>("list_conflicts"),
+  listConflicts: (limit?: number, offset?: number) =>
+    invoke<Page<ConflictItem>>("list_conflicts", { limit, offset }),
   resolveConflict: (id: number, action?: ConflictAction) =>
     invoke<void>("resolve_conflict", { id, action }),
-  listDirty: () => invoke<DirtyEntry[]>("list_dirty"),
+  listDirty: (limit?: number, offset?: number) =>
+    invoke<Page<DirtyEntry>>("list_dirty", { limit, offset }),
   getSettings: () => invoke<SettingsView>("get_settings"),
   manualScan: () => invoke<number>("manual_scan"),
   regenerateAuthToken: () => invoke<string>("regenerate_auth_token"),

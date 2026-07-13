@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, watch, computed, ref } from "vue"
 import { useRouter } from "vue-router"
-import { NSpace, NInput, NSelect, NSpin, NEmpty, NTag, useMessage } from "naive-ui"
+import { NSpace, NInput, NSelect, NSpin, NEmpty, NTag, NPagination, useMessage } from "naive-ui"
 import { useLibraryStore, useSettingsStore, useRecycleStore } from "@/stores"
 import FileCard from "@/components/FileCard.vue"
 
@@ -16,6 +16,12 @@ function onCardOpen(id: number) {
 
 function onChipClick(name: string) {
   store.setQuery(store.getQuery() === name ? "" : name)
+  store.page = 1
+}
+
+function clearQuery() {
+  store.setQuery("")
+  store.page = 1
 }
 
 const locationOptions = [
@@ -27,8 +33,8 @@ const locationOptions = [
 
 const apiBase = computed(() => settings.apiBase)
 
-/// 当前页条数（store 没有 total 字段；后端 limit=50，列表分页未启用）。
-const totalLabel = computed(() => `${store.items.length} 条`)
+/// "我的同人志 · 共 1324 条"。无副作用时直接读 store.total。
+const totalLabel = computed(() => `共 ${store.total} 条`)
 
 /// 社团 chip 默认折叠展示前 5 个，剩余展开查看。
 const CIRCLE_INITIAL = 5
@@ -49,8 +55,14 @@ onMounted(async () => {
   await store.load()
 })
 
-watch(() => store.query, () => store.load())
-watch(() => store.locationFilter, () => store.load())
+watch(() => store.query, () => {
+  store.page = 1
+  store.load()
+})
+watch(() => store.locationFilter, () => {
+  store.page = 1
+  store.load()
+})
 
 async function onCardArchive(id: number) {
   try {
@@ -122,12 +134,12 @@ async function onCardPermanentDelete(id: number) {
     >
       <n-tag
         v-for="c in visibleCircles"
-        :key="c.name"
-        :type="store.getQuery() === c.name ? 'primary' : 'default'"
+        :key="c.circle"
+        :type="store.getQuery() === c.circle ? 'primary' : 'default'"
         checkable
-        @click="onChipClick(c.name)"
+        @click="onChipClick(c.circle)"
       >
-        {{ c.name }} ({{ c.count }})
+        {{ c.circle }} ({{ c.count }})
       </n-tag>
       <n-tag
         v-if="hiddenCircleCount > 0 && !circlesExpanded"
@@ -144,7 +156,7 @@ async function onCardPermanentDelete(id: number) {
       <n-tag
         v-if="store.getQuery()"
         type="warning"
-        @click="store.setQuery('')"
+        @click="clearQuery"
       >
         清除
       </n-tag>
@@ -159,6 +171,7 @@ async function onCardPermanentDelete(id: number) {
         <file-card
           v-for="f in store.items"
           :key="f.id"
+          v-memo="[f.id, f.current_location, f.has_physical_file]"
           :file="f"
           :api-base="apiBase"
           @open="onCardOpen"
@@ -169,5 +182,15 @@ async function onCardPermanentDelete(id: number) {
         />
       </div>
     </n-spin>
+
+    <div v-if="store.showPager" class="mt-6 flex justify-center">
+      <n-pagination
+        :page="store.page"
+        :page-count="store.totalPages"
+        :page-slot="5"
+        show-quick-jumper
+        @update:page="store.gotoPage"
+      />
+    </div>
   </div>
 </template>

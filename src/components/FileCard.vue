@@ -35,7 +35,7 @@ function formatSize(bytes: number): string {
     @click="emit('open', file.id)"
   >
     <div class="relative aspect-[3/4] overflow-hidden border-b border-border bg-obsidian-deep">
-      <img v-if="file.cover_url" :src="coverSrc()" alt="" class="size-full object-cover" />
+      <img v-if="file.cover_url" :src="coverSrc()" alt="" loading="lazy" class="size-full object-cover" />
       <div
         v-else
         class="flex size-full items-center justify-center font-mono text-caption uppercase tracking-[0.1em] text-smoke"

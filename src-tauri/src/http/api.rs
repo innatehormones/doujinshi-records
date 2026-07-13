@@ -609,10 +609,27 @@ fn state_transition_response(r: anyhow::Result<()>) -> axum::response::Response 
     }
 }
 
-pub async fn list_dirty(State(s): State<ApiState>) -> impl IntoResponse {
+pub async fn list_dirty(
+    State(s): State<ApiState>,
+    Query(p): Query<DirtyListParams>,
+) -> impl IntoResponse {
     use crate::db::entities::dirty_data::Entity as Dirty;
-    match Dirty::find().all(&s.conn).await {
-        Ok(rows) => Json(rows).into_response(),
+    use sea_orm::QuerySelect;
+    let limit = p.limit.unwrap_or(50);
+    let offset = p.offset.unwrap_or(0);
+    let q = Dirty::find();
+    let total = match q.clone().count(&s.conn).await {
+        Ok(n) => n,
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    };
+    match q.offset(offset).limit(limit).all(&s.conn).await {
+        Ok(items) => Json(json!({ "items": items, "total": total })).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
+}
+
+#[derive(Deserialize)]
+pub struct DirtyListParams {
+    pub limit: Option<u64>,
+    pub offset: Option<u64>,
 }

@@ -1,34 +1,62 @@
 use crate::db::entities::doujinshi_file;
 use crate::error::{AppError, AppResult};
-use crate::models::file_summary;
+use crate::models::{file_summary, Page};
 use crate::AppState;
-use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, QueryFilter, Set};
+use sea_orm::{
+    ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QuerySelect, Set,
+};
+use serde::Serialize;
 use tauri::State;
+
+#[derive(Debug, Serialize)]
+pub struct RecyclePage {
+    pub present: Page<file_summary::FileSummary>,
+    pub gone: Page<file_summary::FileSummary>,
+}
 
 #[tauri::command]
 pub async fn list_recycle(
     state: State<'_, AppState>,
-) -> AppResult<(Vec<file_summary::FileSummary>, Vec<file_summary::FileSummary>)> {
+    present_limit: Option<u64>,
+    present_offset: Option<u64>,
+    gone_limit: Option<u64>,
+    gone_offset: Option<u64>,
+) -> AppResult<RecyclePage> {
     // V3: present/gone 改按 has_physical_file 分组——present = 文件仍在，
     // gone = 文件已被外部清走/已被 permanent_delete 真删。FileSummary 不
     // 暴露 physically_deleted 字段所以这里走 has_physical_file 通道。
-    let present = doujinshi_file::Entity::find()
-        .filter(
-            doujinshi_file::Column::CurrentLocation
-                .eq("will_delete")
-                .and(doujinshi_file::Column::HasPhysicalFile.eq(true)),
-        )
+    let present_limit = present_limit.unwrap_or(50);
+    let present_offset = present_offset.unwrap_or(0);
+    let gone_limit = gone_limit.unwrap_or(50);
+    let gone_offset = gone_offset.unwrap_or(0);
+
+    let present_q = doujinshi_file::Entity::find().filter(
+        doujinshi_file::Column::CurrentLocation
+            .eq("will_delete")
+            .and(doujinshi_file::Column::HasPhysicalFile.eq(true)),
+    );
+    let present_total = present_q.clone().count(&state.conn).await?;
+    let present_rows = present_q
+        .clone()
+        .offset(present_offset)
+        .limit(present_limit)
         .all(&state.conn)
         .await?;
-    let gone = doujinshi_file::Entity::find()
-        .filter(
-            doujinshi_file::Column::CurrentLocation
-                .eq("will_delete")
-                .and(doujinshi_file::Column::HasPhysicalFile.eq(false)),
-        )
+
+    let gone_q = doujinshi_file::Entity::find().filter(
+        doujinshi_file::Column::CurrentLocation
+            .eq("will_delete")
+            .and(doujinshi_file::Column::HasPhysicalFile.eq(false)),
+    );
+    let gone_total = gone_q.clone().count(&state.conn).await?;
+    let gone_rows = gone_q
+        .clone()
+        .offset(gone_offset)
+        .limit(gone_limit)
         .all(&state.conn)
         .await?;
-    let mut ids: Vec<i64> = present.iter().chain(gone.iter()).map(|m| m.id).collect();
+
+    let mut ids: Vec<i64> = present_rows.iter().chain(gone_rows.iter()).map(|m| m.id).collect();
     ids.sort();
     ids.dedup();
     let conflict_map = file_summary::open_conflict_map(&state.conn, &ids).await;
@@ -40,7 +68,10 @@ pub async fn list_recycle(
             })
             .collect()
     };
-    Ok((map_summaries(&present), map_summaries(&gone)))
+    Ok(RecyclePage {
+        present: Page { items: map_summaries(&present_rows), total: present_total },
+        gone: Page { items: map_summaries(&gone_rows), total: gone_total },
+    })
 }
 
 #[tauri::command]
