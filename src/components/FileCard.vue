@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { NPopconfirm } from "naive-ui"
+import { Archive, Trash2, RotateCcw, X, AlertCircle, Inbox } from "@lucide/vue"
 import type { FileSummary } from '@/types/api'
 
 const props = defineProps<{
@@ -8,7 +9,6 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
-(e: 'viewed', id: number): void
 (e: 'archive', id: number): void
 (e: 'restore', id: number): void
 (e: 'mark-delete', id: number): void
@@ -27,19 +27,11 @@ function formatSize(bytes: number): string {
   return (bytes / 1024 / 1024).toFixed(1) + " MB"
 }
 
-function locationLabel(): string {
-  switch (props.file.current_location) {
-    case "will_delete": return "回收"
-    case "archived": return "归档"
-    case "inbox": return "待入库"
-    default: return ""
-  }
-}
 </script>
 
 <template>
   <article
-    class="flex flex-col overflow-hidden rounded-cards border border-border bg-card transition-[border-color,transform] duration-150 hover:border-slate"
+    class="relative flex flex-col overflow-hidden rounded-cards border border-border bg-card transition-[border-color,transform] duration-150 hover:border-slate"
     @click="emit('open', file.id)"
   >
     <div class="relative aspect-[3/4] overflow-hidden border-b border-border bg-obsidian-deep">
@@ -52,25 +44,32 @@ function locationLabel(): string {
       </div>
       <div class="absolute top-2 left-2 flex gap-1">
         <span
-          v-if="file.viewed"
-          class="inline-flex size-5 items-center justify-center rounded-full border border-current bg-obsidian/85 font-mono text-[11px] font-medium text-phosphor-green backdrop-blur-sm"
-          title="已查看"
+          v-if="file.current_location === 'will_delete'"
+          class="inline-flex size-5 items-center justify-center rounded-full border border-current bg-obsidian/85 text-ember-orange backdrop-blur-sm"
+          title="回收"
         >
-          V
+          <Trash2 :size="12" :stroke-width="1.8" />
         </span>
         <span
-          v-if="locationLabel()"
-          class="inline-flex size-5 items-center justify-center rounded-full border border-current bg-obsidian/85 font-mono text-[11px] font-medium text-snow backdrop-blur-sm"
-          :title="locationLabel()"
+          v-if="file.current_location === 'archived'"
+          class="inline-flex size-5 items-center justify-center rounded-full border border-current bg-obsidian/85 text-archive-blue backdrop-blur-sm"
+          title="归档"
         >
-          {{ locationLabel().charAt(0) }}
+          <Archive :size="12" :stroke-width="1.8" />
+        </span>
+        <span
+          v-if="file.current_location === 'inbox'"
+          class="inline-flex size-5 items-center justify-center rounded-full border border-current bg-obsidian/85 text-snow backdrop-blur-sm"
+          title="待入库"
+        >
+          <Inbox :size="12" :stroke-width="1.8" />
         </span>
         <span
           v-if="!file.has_physical_file"
-          class="inline-flex size-5 items-center justify-center rounded-full border border-current bg-obsidian/85 font-mono text-[11px] font-medium text-ember-orange backdrop-blur-sm"
+          class="inline-flex size-5 items-center justify-center rounded-full border border-current bg-obsidian/85 text-ember-red backdrop-blur-sm"
           title="文件丢失"
         >
-          !
+          <AlertCircle :size="12" :stroke-width="1.8" />
         </span>
       </div>
     </div>
@@ -82,15 +81,8 @@ function locationLabel(): string {
         <span v-if="file.circle" class="max-w-[60%] truncate">{{ file.circle }}</span>
         <span class="font-mono text-graphite tracking-[0.05em]">{{ formatSize(file.size_bytes) }}</span>
       </div>
-      <div class="mt-2 flex flex-wrap gap-2" @click.stop>
-        <button
-          class="min-w-[60px] flex-1 cursor-pointer rounded-full border border-slate bg-transparent px-3 py-1.5 font-sans text-caption font-medium text-snow transition-[border-color,background-color] duration-150 hover:border-graphite hover:bg-snow/4"
-          @click="emit('viewed', file.id)"
-        >
-          {{ file.viewed ? "取消已看" : "标记已看" }}
-        </button>
-
-        <!-- identified: 归档 + 移到回收站 -->
+      <div class="mt-2 flex flex-nowrap gap-1.5" @click.stop>
+        <!-- identified: 归档 + 回收 -->
         <template v-if="file.current_location === 'identified'">
           <n-popconfirm
             positive-text="归档"
@@ -98,7 +90,8 @@ function locationLabel(): string {
             @positive-click="emit('archive', file.id)"
           >
             <template #trigger>
-              <button class="min-w-[60px] flex-1 cursor-pointer rounded-full border border-slate bg-transparent px-3 py-1.5 font-sans text-caption font-medium text-snow transition-[border-color,background-color] duration-150 hover:border-graphite hover:bg-snow/4">
+              <button class="inline-flex min-w-0 flex-1 items-center justify-center gap-1 whitespace-nowrap rounded-full border border-slate bg-transparent px-2 py-1.5 font-sans text-caption font-medium text-snow transition-[border-color,background-color] duration-150 hover:border-graphite hover:bg-snow/4">
+                <Archive :size="13" :stroke-width="1.8" />
                 归档
               </button>
             </template>
@@ -110,20 +103,22 @@ function locationLabel(): string {
             @positive-click="emit('mark-delete', file.id)"
           >
             <template #trigger>
-              <button class="min-w-[60px] flex-1 cursor-pointer rounded-full border border-ember-orange bg-transparent px-3 py-1.5 font-sans text-caption font-medium text-ember-orange transition-[border-color,background-color] duration-150 hover:bg-ember-orange/8">
-                移到回收站
+              <button class="inline-flex min-w-0 flex-1 items-center justify-center gap-1 whitespace-nowrap rounded-full border border-ember-orange bg-transparent px-2 py-1.5 font-sans text-caption font-medium text-ember-orange transition-[border-color,background-color] duration-150 hover:bg-ember-orange/8">
+                <Trash2 :size="13" :stroke-width="1.8" />
+                回收
               </button>
             </template>
             把《{{ file.title }}》移到回收站？随时可在回收站页取回。
           </n-popconfirm>
         </template>
 
-        <!-- will_delete: 取回 + 彻底清理 -->
+        <!-- will_delete: 取回 + 删除 -->
         <template v-else-if="file.current_location === 'will_delete'">
           <button
-            class="min-w-[60px] flex-1 cursor-pointer rounded-full border border-slate bg-transparent px-3 py-1.5 font-sans text-caption font-medium text-snow transition-[border-color,background-color] duration-150 hover:border-graphite hover:bg-snow/4"
+            class="inline-flex min-w-0 flex-1 items-center justify-center gap-1 whitespace-nowrap rounded-full border border-slate bg-transparent px-2 py-1.5 font-sans text-caption font-medium text-snow transition-[border-color,background-color] duration-150 hover:border-graphite hover:bg-snow/4"
             @click="emit('restore', file.id)"
           >
+            <RotateCcw :size="13" :stroke-width="1.8" />
             取回
           </button>
           <n-popconfirm
@@ -134,8 +129,9 @@ function locationLabel(): string {
             @positive-click="emit('permanent-delete', file.id)"
           >
             <template #trigger>
-              <button class="min-w-[60px] flex-1 cursor-pointer rounded-full border border-ember-red bg-transparent px-3 py-1.5 font-sans text-caption font-medium text-ember-red transition-[border-color,background-color] duration-150 hover:bg-ember-red/8">
-                彻底清理
+              <button class="inline-flex min-w-0 flex-1 items-center justify-center gap-1 whitespace-nowrap rounded-full border border-ember-red bg-transparent px-2 py-1.5 font-sans text-caption font-medium text-ember-red transition-[border-color,background-color] duration-150 hover:bg-ember-red/8">
+                <X :size="13" :stroke-width="1.8" />
+                删除
               </button>
             </template>
             彻底清理将从硬盘删除 zip 文件（DB 记录保留，元数据可搜索）。
@@ -145,9 +141,10 @@ function locationLabel(): string {
         <!-- archived: 取回 -->
         <template v-else-if="file.current_location === 'archived'">
           <button
-            class="min-w-[60px] flex-1 cursor-pointer rounded-full border border-slate bg-transparent px-3 py-1.5 font-sans text-caption font-medium text-snow transition-[border-color,background-color] duration-150 hover:border-graphite hover:bg-snow/4"
+            class="inline-flex min-w-0 flex-1 items-center justify-center gap-1 whitespace-nowrap rounded-full border border-slate bg-transparent px-2 py-1.5 font-sans text-caption font-medium text-snow transition-[border-color,background-color] duration-150 hover:border-graphite hover:bg-snow/4"
             @click="emit('restore', file.id)"
           >
+            <RotateCcw :size="13" :stroke-width="1.8" />
             取回
           </button>
         </template>

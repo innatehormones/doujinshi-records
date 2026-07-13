@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue"
+import { useRouter } from "vue-router"
 import {
-  NCard, NSpace, NButton, NTag, NSpin, NEmpty, NDivider, useMessage,
+  NSpin, NEmpty, NDivider, useMessage,
 } from "naive-ui"
+import { Trash2, RotateCcw, X } from "@lucide/vue"
 import { useRecycleStore, useSettingsStore } from "@/stores"
 import PermanentDeleteDialog from "@/components/PermanentDeleteDialog.vue"
 import RestoreDialog from "@/components/RestoreDialog.vue"
@@ -10,6 +12,7 @@ import type { FileSummary } from "@/types/api"
 
 const store = useRecycleStore()
 const settings = useSettingsStore()
+const router = useRouter()
 const message = useMessage()
 
 const target = ref<FileSummary | null>(null)
@@ -20,6 +23,10 @@ onMounted(async () => {
   await settings.load()
   await store.load()
 })
+
+function onCardOpen(id: number) {
+  router.push({ name: 'detail', params: { id } })
+}
 
 function askDelete(f: FileSummary) {
   target.value = f
@@ -80,75 +87,112 @@ function fmtSize(bytes: number): string {
       </span>
     </header>
     <n-spin :show="store.loading">
-      <n-card title="待删除文件（仍在硬盘上）">
-        <p class="text-caption text-silver-mist">
+      <section>
+        <h2 class="text-subheading font-medium text-snow tracking-body">
+          待删除文件 ({{ store.present.length }})
+        </h2>
+        <p class="mt-2 text-caption leading-[1.5] text-silver-mist">
           这里的文件已经移出已识别库，但仍占用硬盘空间。「永久删除」会把文件从硬盘移除；「还原」会让文件回到库内。两种操作都会保留数据记录。
         </p>
-      </n-card>
 
-      <n-empty
-        v-if="!store.loading && store.present.length === 0"
-        description="回收站为空。"
-      />
+        <n-empty
+          v-if="!store.loading && store.present.length === 0"
+          description="回收站为空。"
+          class="mt-4"
+        />
 
-      <div v-if="store.present.length > 0" class="grid grid-cols-[repeat(auto-fill,minmax(220px,1fr))] gap-4">
-        <article
-          v-for="f in store.present"
-          :key="f.id"
-          class="flex flex-col overflow-hidden rounded-cards border border-border bg-card"
+        <div
+          v-else
+          class="mt-4 grid grid-cols-3 gap-5 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 2xl:grid-cols-8"
         >
-          <div class="relative aspect-[3/4] overflow-hidden border-b border-border bg-obsidian-deep">
-            <img v-if="f.cover_url" :src="coverUrl(f)" alt="" class="size-full object-cover" />
-            <div
-              v-else
-              class="flex size-full items-center justify-center font-mono text-caption uppercase tracking-[0.1em] text-smoke"
-            >
-              暂无封面
+          <article
+            v-for="f in store.present"
+            :key="f.id"
+            class="relative flex flex-col overflow-hidden rounded-cards border border-border bg-card transition-[border-color,transform] duration-150 hover:border-slate"
+            @click="onCardOpen(f.id)"
+          >
+            <div class="relative aspect-[3/4] overflow-hidden border-b border-border bg-obsidian-deep">
+              <img v-if="f.cover_url" :src="coverUrl(f)" alt="" class="size-full object-cover" />
+              <div
+                v-else
+                class="flex size-full items-center justify-center font-mono text-caption uppercase tracking-[0.1em] text-smoke"
+              >
+                暂无封面
+              </div>
+              <div class="absolute top-2 left-2 flex gap-1">
+                <span
+                  class="inline-flex size-5 items-center justify-center rounded-full border border-current bg-obsidian/85 text-ember-orange backdrop-blur-sm"
+                  title="回收"
+                >
+                  <Trash2 :size="12" :stroke-width="1.8" />
+                </span>
+              </div>
             </div>
-          </div>
-          <div class="flex flex-col gap-2 p-4">
-            <div class="flex items-center gap-[6px]">
-              <span class="flex-1 truncate text-body-sm font-medium text-snow">{{ f.title }}</span>
+            <div class="flex flex-col gap-2 p-4">
+              <div class="truncate text-body-sm font-medium leading-[1.3] text-snow" :title="f.title">
+                {{ f.title }}
+              </div>
+              <div class="flex min-h-4 items-center justify-between text-caption text-smoke">
+                <span v-if="f.circle" class="max-w-[60%] truncate">{{ f.circle }}</span>
+                <span class="font-mono text-graphite tracking-[0.05em]">{{ fmtSize(f.size_bytes) }}</span>
+              </div>
+              <div class="mt-2 flex flex-nowrap gap-1.5" @click.stop>
+                <button
+                  class="inline-flex min-w-0 flex-1 items-center justify-center gap-1 whitespace-nowrap rounded-full border border-slate bg-transparent px-2 py-1.5 font-sans text-caption font-medium text-snow transition-[border-color,background-color] duration-150 hover:border-graphite hover:bg-snow/4"
+                  @click="askRestore(f)"
+                >
+                  <RotateCcw :size="13" :stroke-width="1.8" />
+                  还原
+                </button>
+                <button
+                  class="inline-flex min-w-0 flex-1 items-center justify-center gap-1 whitespace-nowrap rounded-full border border-ember-red bg-transparent px-2 py-1.5 font-sans text-caption font-medium text-ember-red transition-[border-color,background-color] duration-150 hover:bg-ember-red/8"
+                  @click="askDelete(f)"
+                >
+                  <X :size="13" :stroke-width="1.8" />
+                  删除
+                </button>
+              </div>
             </div>
-            <div class="min-h-4 text-caption text-smoke">
-              <span>{{ fmtSize(f.size_bytes) }}</span>
-            </div>
-            <n-space size="small" class="mt-1">
-              <n-button size="tiny" type="primary" @click="askRestore(f)">还原</n-button>
-              <n-button size="tiny" type="error" @click="askDelete(f)">永久删除</n-button>
-            </n-space>
-          </div>
-        </article>
-      </div>
+          </article>
+        </div>
+      </section>
 
       <n-divider />
 
-      <n-card title="已从硬盘删除">
-        <p class="text-caption text-silver-mist">
+      <section>
+        <h2 class="text-subheading font-medium text-snow tracking-body">
+          已从硬盘删除 ({{ store.gone.length }})
+        </h2>
+        <p class="mt-2 text-caption leading-[1.5] text-silver-mist">
           数据记录保留供搜索 / 外部工具使用。这里的文件无法再还原。
         </p>
         <n-empty
           v-if="store.gone.length === 0"
           description="暂无已删除记录。"
           size="small"
-          class="mt-2"
+          class="mt-4"
         />
-        <n-list v-else bordered>
-          <n-list-item v-for="f in store.gone" :key="f.id">
-            <n-thing>
-              <template #header>
-                <n-tag size="small" type="error">已删除</n-tag>
-                <span class="ml-2">{{ f.title }}</span>
-              </template>
-              <template #description>
-                <span class="font-mono text-[11px] text-smoke">
-                  {{ fmtSize(f.size_bytes) }} · {{ f.hash.slice(0, 12) }}…
-                </span>
-              </template>
-            </n-thing>
-          </n-list-item>
-        </n-list>
-      </n-card>
+        <div v-else class="mt-4 flex flex-col gap-2">
+          <article
+            v-for="f in store.gone"
+            :key="f.id"
+            class="flex items-center gap-3 rounded-cards border border-border bg-card p-4"
+          >
+            <span
+              class="inline-flex size-5 shrink-0 items-center justify-center rounded-full border border-current bg-obsidian-deep text-ember-red"
+              title="已删除"
+            >
+              <X :size="12" :stroke-width="1.8" />
+            </span>
+            <div class="flex min-w-0 flex-1 flex-col gap-0.5">
+              <span class="truncate text-body-sm font-medium text-snow">{{ f.title }}</span>
+              <span class="font-mono text-[11px] text-smoke">
+                {{ fmtSize(f.size_bytes) }} · hash {{ f.hash.slice(0, 12) }}…
+              </span>
+            </div>
+          </article>
+        </div>
+      </section>
 
       <permanent-delete-dialog
         :show="showDelete"

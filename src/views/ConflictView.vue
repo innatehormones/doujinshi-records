@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from "vue"
 import { useRoute, useRouter } from "vue-router"
-import { NCard, NSpace, NButton, NSpin, NList, NListItem, NEmpty, NAlert, useMessage } from "naive-ui"
+import { NCard, NButton, NSpin, NList, NListItem, NEmpty, NAlert, useMessage } from "naive-ui"
 import { useInboxStore, useSettingsStore } from "@/stores"
 import type { ConflictCompare, ConflictAction as ConflictActionType } from "@/types/api"
 
@@ -85,7 +85,7 @@ async function act(action: ConflictActionType) {
             :title="data.a.zip_error"
             class="my-2"
           />
-          <h4>文件列表 ({{ data.a.image_names.length }})</h4>
+          <h3 class="text-subheading font-medium text-snow tracking-body">文件列表 ({{ data.a.image_names.length }})</h3>
           <n-empty
             v-if="data.a.image_names.length === 0"
             description="(无图片)"
@@ -115,7 +115,7 @@ async function act(action: ConflictActionType) {
             :title="data.b.zip_error"
             class="my-2"
           />
-          <h4>文件列表 ({{ data.b.image_names.length }})</h4>
+          <h3 class="text-subheading font-medium text-snow tracking-body">文件列表 ({{ data.b.image_names.length }})</h3>
           <n-empty
             v-if="data.b.image_names.length === 0"
             description="(无图片)"
@@ -129,12 +129,12 @@ async function act(action: ConflictActionType) {
         </n-card>
       </div>
 
-      <n-space v-if="data" class="mt-4" justify="end">
+      <div v-if="data" class="mt-4 flex flex-wrap justify-end gap-2">
+        <n-button @click="act('skip')">都跳过</n-button>
+        <n-button type="primary" @click="act('keep_both')">都保留（加后缀入库）</n-button>
         <n-button @click="act('keep_a')">保留 A（删 B）</n-button>
         <n-button type="warning" @click="act('replace_b')">替换为 B（删 A）</n-button>
-        <n-button @click="act('keep_both')">都保留（B 加后缀入库）</n-button>
-        <n-button @click="act('skip')">都跳过（保留 B 在 inbox）</n-button>
-      </n-space>
+      </div>
     </n-spin>
   </div>
 </template>
