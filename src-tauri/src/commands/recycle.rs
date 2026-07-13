@@ -28,14 +28,24 @@ pub async fn list_recycle(
         )
         .all(&state.conn)
         .await?;
-    Ok((
-        present.iter().map(file_summary::from_model).collect(),
-        gone.iter().map(file_summary::from_model).collect(),
-    ))
+    let mut ids: Vec<i64> = present.iter().chain(gone.iter()).map(|m| m.id).collect();
+    ids.sort();
+    ids.dedup();
+    let conflict_map = file_summary::open_conflict_map(&state.conn, &ids).await;
+    let map_summaries = |rows: &[doujinshi_file::Model]| -> Vec<file_summary::FileSummary> {
+        rows.iter()
+            .map(|m| {
+                let has = conflict_map.get(&m.id).copied().unwrap_or(false);
+                file_summary::from_model_with_conflict_state(m, has)
+            })
+            .collect()
+    };
+    Ok((map_summaries(&present), map_summaries(&gone)))
 }
 
 #[tauri::command]
 pub async fn permanent_delete(state: State<'_, AppState>, id: i64) -> AppResult<()> {
+    crate::commands::guards::ensure_no_open_conflict(&state.conn, id).await?;
     let file = doujinshi_file::Entity::find_by_id(id)
         .one(&state.conn)
         .await?

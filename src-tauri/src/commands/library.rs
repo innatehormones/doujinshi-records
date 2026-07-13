@@ -45,9 +45,12 @@ pub async fn list_library(
     .offset(offset.unwrap_or(0))
         .all(conn)
         .await?;
+    let ids: Vec<i64> = rows.iter().map(|m| m.id).collect();
+    let conflict_map = file_summary::open_conflict_map(conn, &ids).await;
     let mut out = Vec::with_capacity(rows.len());
     for m in rows {
-        out.push(file_summary::from_model(&m));
+        let has = conflict_map.get(&m.id).copied().unwrap_or(false);
+        out.push(file_summary::from_model_with_conflict_state(&m, has));
     }
     Ok(out)
 }
@@ -64,6 +67,7 @@ pub async fn unmark_viewed(state: State<'_, AppState>, id: i64) -> AppResult<()>
 
 #[tauri::command]
 pub async fn mark_for_delete(state: State<'_, AppState>, id: i64) -> AppResult<()> {
+    crate::commands::guards::ensure_no_open_conflict(&state.conn, id).await?;
     state_machine_transition(&state, id, crate::services::state_machine::TransitionKind::MarkForDelete).await
 }
 
@@ -74,6 +78,7 @@ pub async fn unmark_for_delete(state: State<'_, AppState>, id: i64) -> AppResult
 
 #[tauri::command]
 pub async fn archive(state: State<'_, AppState>, id: i64) -> AppResult<()> {
+    crate::commands::guards::ensure_no_open_conflict(&state.conn, id).await?;
     state_machine_transition(&state, id, crate::services::state_machine::TransitionKind::Archive).await
 }
 
@@ -103,6 +108,7 @@ async fn state_machine_transition(
 
 #[tauri::command]
 pub async fn move_to_will_delete(state: State<'_, AppState>, id: i64) -> AppResult<()> {
+    crate::commands::guards::ensure_no_open_conflict(&state.conn, id).await?;
     use sea_orm::EntityTrait;
     let row = doujinshi_file::Entity::find_by_id(id)
         .one(&state.conn)
@@ -213,7 +219,7 @@ pub async fn get_by_id(
         .one(&state.conn)
         .await?
         .ok_or_else(|| AppError::Other(format!("file {} not found", id)))?;
-    Ok(file_summary::from_model(&row))
+    Ok(file_summary::from_model(&state.conn, &row).await)
 }
 
 /// Re-run the identifier on a specific inbox file path with the size

@@ -4,3 +4,5 @@ pub mod library;
 pub mod recycle;
 pub mod settings;
 
+pub mod guards;
+

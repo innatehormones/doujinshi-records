@@ -56,7 +56,15 @@ pub async fn search(
         .all(&s.conn)
         .await
         .unwrap_or_default();
-    let items: Vec<file_summary::FileSummary> = rows.iter().map(file_summary::from_model).collect();
+    let ids: Vec<i64> = rows.iter().map(|m| m.id).collect();
+    let conflict_map = file_summary::open_conflict_map(&s.conn, &ids).await;
+    let items: Vec<file_summary::FileSummary> = rows
+        .iter()
+        .map(|m| {
+            let has = conflict_map.get(&m.id).copied().unwrap_or(false);
+            file_summary::from_model_with_conflict_state(m, has)
+        })
+        .collect();
     Json(json!({ "items": items, "total": total }))
 }
 
@@ -70,7 +78,7 @@ pub async fn by_hash(
         .await
         .unwrap_or(None);
     match row {
-        Some(m) => Json(json!(file_summary::from_model(&m))),
+        Some(m) => Json(json!(file_summary::from_model(&s.conn, &m).await)),
         None => Json(json!(null)),
     }
 }
@@ -81,7 +89,7 @@ pub async fn by_id(State(s): State<ApiState>, Path(id): Path<i64>) -> impl IntoR
         .await
         .unwrap_or(None);
     match row {
-        Some(m) => (StatusCode::OK, Json(json!(file_summary::from_model(&m)))).into_response(),
+        Some(m) => (StatusCode::OK, Json(json!(file_summary::from_model(&s.conn, &m).await))).into_response(),
         None => StatusCode::NOT_FOUND.into_response(),
     }
 }
@@ -133,7 +141,7 @@ pub async fn check(
         .await
         .unwrap_or(None);
     match row {
-        Some(m) => Json(json!(file_summary::from_model(&m))),
+        Some(m) => Json(json!(file_summary::from_model(&s.conn, &m).await)),
         None => Json(json!(null)),
     }
 }
