@@ -5,7 +5,6 @@ export interface FileSummary {
   hash: string
   ext: string
   size_bytes: number
-  viewed: boolean
   current_location: "inbox" | "identified" | "will_delete" | "archived"
   has_physical_file: boolean
   cover_url: string | null

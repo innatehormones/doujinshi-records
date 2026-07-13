@@ -2,11 +2,9 @@ import { invoke } from "@tauri-apps/api/core"
 import type { FileSummary, SettingsView, ConflictItem, ConflictAction, DirtyEntry } from "@/types/api"
 
 export const api = {
-  listLibrary: (q?: string, status?: string, location?: string) =>
-    invoke<FileSummary[]>("list_library", { q, status, location }),
+  listLibrary: (q?: string, location?: string) =>
+    invoke<FileSummary[]>("list_library", { q, location }),
   getById: (id: number) => invoke<FileSummary>("get_by_id", { id }),
-  markViewed: (id: number) => invoke<void>("mark_viewed", { id }),
-  unmarkViewed: (id: number) => invoke<void>("unmark_viewed", { id }),
   markForDelete: (id: number) => invoke<void>("mark_for_delete", { id }),
   unmarkForDelete: (id: number) => invoke<void>("unmark_for_delete", { id }),
   moveToWillDelete: (id: number) => invoke<void>("move_to_will_delete", { id }),

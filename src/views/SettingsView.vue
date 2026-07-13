@@ -67,7 +67,6 @@ const apiLines = computed(() => [
   "GET  " + store.apiBase + "/api/doujinshi/check?hash=<blake3>  检查哈希是否在库",
   "GET  " + store.apiBase + "/api/doujinshi/by-hash/<hash>       按哈希查询",
   "GET  " + store.apiBase + "/api/doujinshi/<id>                  按 ID 查询",
-  "POST " + store.apiBase + "/api/doujinshi/<id>/viewed          标记已看",
   "GET  " + store.apiBase + "/api/covers/by-hash/<hash>          按哈希取封面",
   "GET  " + store.apiBase + "/api/covers/<file_id>               按 ID 取封面",
 ])
@@ -85,7 +84,7 @@ const apiLines = computed(() => [
           <n-spin :show="!store.data">
             <div v-if="store.data" class="flex flex-col gap-1">
               <div>资源目录: <n-tag>{{ store.data.resources_dir }}</n-tag></div>
-              <div>待识别: <n-tag>{{ store.data.inbox_dir }}</n-tag></div>
+              <div>冲突处理: <n-tag>{{ store.data.inbox_dir }}</n-tag></div>
               <div>已识别: <n-tag>{{ store.data.identified_dir }}</n-tag></div>
               <div>待删除: <n-tag>{{ store.data.will_delete_dir }}</n-tag></div>
               <div>封面: <n-tag>{{ store.data.covers_dir }}</n-tag></div>
@@ -137,7 +136,7 @@ const apiLines = computed(() => [
 
         <n-card title="Inbox 目录">
           <p class="text-caption text-silver-mist">
-            待识别压缩包放这里，应用会自动处理。
+            冲突处理压缩包放这里，应用会自动处理。
           </p>
           <n-input :value="store.data?.inbox_dir ?? ''" readonly />
         </n-card>
@@ -167,7 +166,7 @@ const apiLines = computed(() => [
             后台监听 <code>resources/doujinshi/</code>，自动处理新放入的压缩包。如果你怀疑漏掉了某个文件，可以点下面手动扫描。
           </p>
           <n-space>
-            <n-button type="primary" @click="runScan">手动扫描待识别目录</n-button>
+            <n-button type="primary" @click="runScan">手动扫描冲突处理目录</n-button>
             <n-tag v-if="scanResult !== null">上次处理: {{ scanResult }} 个</n-tag>
           </n-space>
         </n-card>

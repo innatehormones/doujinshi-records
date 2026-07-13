@@ -176,8 +176,6 @@ pub async fn run(cfg: config::AppConfig, conn: DatabaseConnection) {
         .manage(http::Port(port))
         .invoke_handler(tauri::generate_handler![
             commands::library::list_library,
-            commands::library::mark_viewed,
-            commands::library::unmark_viewed,
             commands::library::mark_for_delete,
             commands::library::unmark_for_delete,
             commands::library::move_to_will_delete,

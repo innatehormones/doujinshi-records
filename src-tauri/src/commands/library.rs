@@ -10,7 +10,6 @@ use tauri::State;
 pub async fn list_library(
     state: State<'_, AppState>,
     q: Option<String>,
-    status: Option<String>,
     location: Option<String>,
     limit: Option<u64>,
     offset: Option<u64>,
@@ -18,16 +17,9 @@ pub async fn list_library(
     let conn = &state.conn;
     let mut query = doujinshi_file::Entity::find();
     if let Some(loc) = location.as_deref().filter(|s| !s.is_empty() && *s != "all") {
-        query = query.filter(doujinshi_file::Column::CurrentLocation.eq(loc));
-    } else {
-        query = query.filter(doujinshi_file::Column::CurrentLocation.eq("identified"));
-    }
-    if let Some(s) = status.as_deref() {
-        query = match s {
-            "viewed" => query.filter(doujinshi_file::Column::Viewed.eq(true)),
-            "not_viewed" => query.filter(doujinshi_file::Column::Viewed.eq(false)),
-            "marked" => query.filter(doujinshi_file::Column::MarkedForDelete.eq(true)),
-            _ => query,
+        query = match loc {
+            "physically_deleted" => query.filter(doujinshi_file::Column::PhysicallyDeleted.eq(true)),
+            other => query.filter(doujinshi_file::Column::CurrentLocation.eq(other)),
         };
     }
     if let Some(qs) = q.as_deref().filter(|s| !s.is_empty()) {
@@ -53,16 +45,6 @@ pub async fn list_library(
         out.push(file_summary::from_model_with_conflict_state(&m, has));
     }
     Ok(out)
-}
-
-#[tauri::command]
-pub async fn mark_viewed(state: State<'_, AppState>, id: i64) -> AppResult<()> {
-    set_flag(&state, id, |m| { m.viewed = Set(true); }).await
-}
-
-#[tauri::command]
-pub async fn unmark_viewed(state: State<'_, AppState>, id: i64) -> AppResult<()> {
-    set_flag(&state, id, |m| { m.viewed = Set(false); }).await
 }
 
 #[tauri::command]
@@ -138,22 +120,6 @@ pub async fn move_to_will_delete(state: State<'_, AppState>, id: i64) -> AppResu
     am.current_path = Set(dst.to_string_lossy().into_owned());
     am.current_location = Set("will_delete".into());
     am.marked_for_delete = Set(false);
-    am.updated_at = Set(chrono::Utc::now());
-    am.update(&state.conn).await?;
-    Ok(())
-}
-
-async fn set_flag<F>(state: &AppState, id: i64, mut apply: F) -> AppResult<()>
-where
-    F: FnMut(&mut doujinshi_file::ActiveModel),
-{
-    use sea_orm::EntityTrait;
-    let row = doujinshi_file::Entity::find_by_id(id)
-        .one(&state.conn)
-        .await?
-        .ok_or_else(|| AppError::Other(format!("file {} not found", id)))?;
-    let mut am: doujinshi_file::ActiveModel = row.into();
-    apply(&mut am);
     am.updated_at = Set(chrono::Utc::now());
     am.update(&state.conn).await?;
     Ok(())

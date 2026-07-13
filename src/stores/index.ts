@@ -64,8 +64,9 @@ export const useLibraryStore = defineStore("library", () => {
   // without exposing timer details to the view.
   const queryInput = ref("")
   const query = ref("")
-  const status = ref<"all" | "viewed" | "not_viewed" | "marked">("all")
-  const locationFilter = ref<"all" | "identified" | "will_delete" | "archived">("all")
+  const locationFilter = ref<
+    null | "identified" | "will_delete" | "archived" | "physically_deleted"
+  >(null)
   const loading = ref(false)
 
   let debounceTimer: number | undefined
@@ -81,18 +82,11 @@ export const useLibraryStore = defineStore("library", () => {
     try {
       items.value = await api.listLibrary(
         query.value || undefined,
-        status.value === "all" ? undefined : status.value,
-        locationFilter.value === "all" ? undefined : locationFilter.value
+        locationFilter.value ?? undefined,
       )
     } finally {
       loading.value = false
     }
-  }
-
-  async function markViewed(id: number) {
-    await api.markViewed(id)
-    const f = items.value.find((f) => f.id === id)
-    if (f) f.viewed = true
   }
 
   async function archive(id: number) {
@@ -152,8 +146,8 @@ export const useLibraryStore = defineStore("library", () => {
   }
 
   return {
-    items, query, status, locationFilter, loading,
-    load, markViewed,
+    items, query, locationFilter, loading,
+    load,
     archive, restore, markForDelete, unmarkForDelete, confirmMoveToWillDelete,
     fetchDetailImagesFor, updateMetadataFor,
     topCircles, setQuery, getQuery,

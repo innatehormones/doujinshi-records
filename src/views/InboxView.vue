@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue"
 import {
-  NList, NListItem, NThing, NTag, NSpace, NButton, NSpin, NEmpty, NCard, NAlert, NModal,
+  NTag, NSpace, NButton, NSpin, NEmpty, NAlert, NModal,
 } from "naive-ui"
 import { useInboxStore } from "@/stores"
 import type { RarErrorEntry, RarError } from "@/types/api"
@@ -57,20 +57,22 @@ function rarErrorTitle(kind: RarError["kind"]): string {
 <template>
   <div class="page">
     <header class="flex items-baseline justify-between gap-4">
-      <h1 class="text-heading-sm font-medium text-snow tracking-body">待识别</h1>
+      <h1 class="text-heading-sm font-medium text-snow tracking-body">冲突处理</h1>
       <span class="font-mono text-caption text-smoke tracking-[0.1em]">
         {{ store.conflicts.length }} 个待处理
       </span>
     </header>
-    <n-card title="待识别 · 文件名冲突">
-      <p class="text-silver-mist">
+    <div class="rounded-cards border border-border bg-card px-5 py-4">
+      <p class="text-caption leading-[1.5] text-silver-mist">
         文件名与已识别库内文件相同的压缩包会停在这里。点「跳过」让新文件留在 inbox 不动，或点「内容比对」做内容级决策。
       </p>
-    </n-card>
+    </div>
 
     <!-- RAR 错误卡片：扫描器通过 `rar-error` 事件上报。 -->
-    <div v-if="store.rarErrors.length > 0" class="mt-4">
-      <h3 class="mb-2">RAR 处理失败 ({{ store.rarErrors.length }})</h3>
+    <div v-if="store.rarErrors.length > 0" class="flex flex-col gap-3">
+      <h2 class="text-subheading font-medium text-snow tracking-body">
+        RAR 处理失败 ({{ store.rarErrors.length }})
+      </h2>
       <n-alert
         v-for="err in store.rarErrors"
         :key="err.file_path"
@@ -78,7 +80,6 @@ function rarErrorTitle(kind: RarError["kind"]): string {
         :title="`${err.filename}：${rarErrorTitle(err.error.kind)}`"
         closable
         @close="store.dismissRarError(err.file_path)"
-        class="mb-2"
       >
         <template v-if="err.error.kind === 'unrar_not_installed'">
           本机未安装 RAR 解压工具（WinRAR / 7-Zip），请先安装：
@@ -116,50 +117,52 @@ function rarErrorTitle(kind: RarError["kind"]): string {
       </n-alert>
     </div>
 
-    <h3 class="mt-4">
+    <h2 class="text-subheading font-medium text-snow tracking-body">
       待处理冲突 ({{ store.conflicts.length }})
-    </h3>
+    </h2>
 
     <n-spin :show="store.loading">
       <n-empty
         v-if="!store.loading && store.conflicts.length === 0"
         description="没有待处理冲突。"
       />
-      <n-list bordered>
-        <n-list-item v-for="c in store.conflicts" :key="c.id">
-          <n-thing>
-            <template #header>
-              <n-tag type="warning" size="small">conflict</n-tag>
-              <span class="ml-2">{{ c.b_filename }}</span>
-            </template>
-            <template #description>
-              <div class="text-caption text-silver-mist">
-                已在库中: <strong>{{ c.a_title }}</strong>
-                (id={{ c.a_file_id }})
-              </div>
-              <div class="break-all font-mono text-[11px] text-smoke">
-                {{ c.b_file_path }}
-              </div>
-            </template>
-          </n-thing>
-          <template #suffix>
-            <n-space>
-              <router-link
-                :to="{ name: 'compare', params: { id: c.id } }"
-                custom
-                v-slot="{ navigate }"
-              >
-                <n-button size="small" type="primary" @click="navigate">
-                  内容比对
-                </n-button>
-              </router-link>
-              <n-button size="small" @click="store.resolve(c.id)">
-                跳过
+      <div class="flex flex-col gap-3">
+        <article
+          v-for="c in store.conflicts"
+          :key="c.id"
+          class="flex items-start gap-4 rounded-cards border border-border bg-card p-4"
+        >
+          <div class="flex min-w-0 flex-1 flex-col gap-1.5">
+            <div class="flex items-center gap-2">
+              <n-tag size="small" type="warning">冲突</n-tag>
+              <span class="truncate text-body-sm font-medium text-snow">
+                {{ c.b_filename }}
+              </span>
+            </div>
+            <div class="text-caption text-silver-mist">
+              已在库中：<strong class="text-snow">{{ c.a_title }}</strong>
+              （id {{ c.a_file_id }}）
+            </div>
+            <div class="break-all font-mono text-[11px] text-smoke">
+              {{ c.b_file_path }}
+            </div>
+          </div>
+          <div class="flex shrink-0 gap-2">
+            <router-link
+              :to="{ name: 'compare', params: { id: c.id } }"
+              custom
+              v-slot="{ navigate }"
+            >
+              <n-button size="small" type="primary" @click="navigate">
+                内容比对
               </n-button>
-            </n-space>
-          </template>
-        </n-list-item>
-      </n-list>
+            </router-link>
+            <n-button size="small" @click="store.resolve(c.id)">
+              跳过
+            </n-button>
+          </div>
+        </article>
+      </div>
     </n-spin>
 
     <!-- 中等 RAR 二次确认弹窗（task #7-6） -->

@@ -27,8 +27,13 @@ pub async fn search(
     State(s): State<ApiState>,
     Query(p): Query<SearchParams>,
 ) -> Json<serde_json::Value> {
-    let mut q =
-        doujinshi_file::Entity::find().filter(doujinshi_file::Column::PhysicallyDeleted.eq(false));
+    let mut q = match p.status.as_deref() {
+        // 物理删除记录：放行不隐。
+        Some("physically_deleted") => doujinshi_file::Entity::find()
+            .filter(doujinshi_file::Column::PhysicallyDeleted.eq(true)),
+        _ => doujinshi_file::Entity::find()
+            .filter(doujinshi_file::Column::PhysicallyDeleted.eq(false)),
+    };
     if let Some(text) = p.q.as_deref().filter(|s| !s.is_empty()) {
         let pat = format!("%{}%", text);
         q = q.filter(
@@ -40,9 +45,10 @@ pub async fn search(
     }
     if let Some(st) = p.status.as_deref() {
         q = match st {
-            "viewed" => q.filter(doujinshi_file::Column::Viewed.eq(true)),
-            "not_viewed" => q.filter(doujinshi_file::Column::Viewed.eq(false)),
-            "marked" => q.filter(doujinshi_file::Column::MarkedForDelete.eq(true)),
+            "physically_deleted" => q, // 上面已用，不再叠加过滤
+            "identified" | "will_delete" | "archived" => {
+                q.filter(doujinshi_file::Column::CurrentLocation.eq(st))
+            }
             _ => q,
         };
     }
@@ -146,23 +152,9 @@ pub async fn check(
     }
 }
 
-/// `POST /api/doujinshi/:id/viewed` — mark a single file as viewed.
-/// Returns 204 on success, 404 when the id does not exist.
-pub async fn mark_viewed_http(State(s): State<ApiState>, Path(id): Path<i64>) -> impl IntoResponse {
-    use sea_orm::{ActiveModelTrait, EntityTrait, Set};
-    let row = match doujinshi_file::Entity::find_by_id(id).one(&s.conn).await {
-        Ok(Some(r)) => r,
-        Ok(None) => return (StatusCode::NOT_FOUND, "no file").into_response(),
-        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-    };
-    let mut am: doujinshi_file::ActiveModel = row.into();
-    am.viewed = Set(true);
-    am.updated_at = Set(chrono::Utc::now());
-    match am.update(&s.conn).await {
-        Ok(_) => (StatusCode::NO_CONTENT, "").into_response(),
-        Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
-    }
-}
+/// `GET /api/doujinshi/:id/images/:index/thumb` — frontend uploads a
+/// pre-converted 800px webp to the LRU. Idempotent: 204 if the file
+/// already exists on disk.
 
 /// `GET /api/covers/by-hash/:hash` — same handler body as `/api/covers/:file_id`
 /// but mounted at a hash-keyed path so the browser extension can fetch a

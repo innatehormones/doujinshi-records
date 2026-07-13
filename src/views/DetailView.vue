@@ -9,11 +9,12 @@
 /// 缩略图视觉防闪烁见 CSS：骨架 div 永远在底层，`<img>` `opacity:0` 挂载
 /// 到 onLoad 期间不可见，onLoad 后切 `.thumb-img-loaded` 淡入。
 
-import { ref, onMounted, onUnmounted, computed, watch } from "vue"
+import { ref, onMounted, onUnmounted, computed, watch, h } from "vue"
 import { useRoute, useRouter } from "vue-router"
 import {
   NCard, NSpace, NButton, NSpin, NInput, NSelect, NEmpty, NAlert, useMessage,
 } from "naive-ui"
+import { ArrowLeft, Star, Archive, Trash2, RotateCcw } from "@lucide/vue"
 import { useLibraryStore, useSettingsStore } from "@/stores"
 import { api } from "@/api/tauri"
 import type { FileSummary, MetadataPatch, DetailImage } from "@/types/api"
@@ -84,12 +85,25 @@ const editNote = ref("")
 const editRating = ref<number | null>(null)
 
 const ratingOptions = [
-  { label: "★", value: 1 },
-  { label: "★★", value: 2 },
-  { label: "★★★", value: 3 },
-  { label: "★★★★", value: 4 },
-  { label: "★★★★★", value: 5 },
+  { label: "1 星", value: 1 },
+  { label: "2 星", value: 2 },
+  { label: "3 星", value: 3 },
+  { label: "4 星", value: 4 },
+  { label: "5 星", value: 5 },
 ]
+
+function renderRatingStars(option: { value: number, label: string }) {
+  const v = (editRating.value ?? 0) as number
+  const filled = v >= option.value
+  return Array.from({ length: option.value }, () =>
+    h(Star, {
+      size: 14,
+      "stroke-width": 1.5,
+      fill: filled ? "currentColor" : "none",
+      style: "color: var(--color-phosphor-green);",
+    }),
+  )
+}
 
 async function load() {
   loading.value = true
@@ -141,17 +155,6 @@ async function save() {
   }
 }
 
-async function markViewed() {
-  if (!file.value) return
-  try {
-    await api.markViewed(id.value)
-    file.value.viewed = true
-    message.success("已标记已看")
-  } catch (e) {
-    message.error(String(e))
-  }
-}
-
 async function archive() {
   if (!file.value) return
   try {
@@ -198,8 +201,13 @@ function locationLabel(): string {
 
 <template>
   <div class="page">
-    <header class="flex items-baseline gap-4">
-      <n-button text @click="router.back()">← 返回</n-button>
+    <header class="flex items-baseline gap-3 border-b border-border pb-4">
+      <n-button text @click="router.back()">
+        <template #icon>
+          <ArrowLeft :size="16" :stroke-width="1.8" />
+        </template>
+        返回
+      </n-button>
       <h1 class="text-heading-sm font-medium text-snow tracking-body">
         {{ file?.title ?? `文件 #${id}` }}
       </h1>
@@ -207,7 +215,7 @@ function locationLabel(): string {
         v-if="file"
         class="font-mono text-caption text-smoke tracking-[0.1em]"
       >
-        id {{ file.id }}
+        · id {{ file.id }}
       </span>
     </header>
     <n-spin :show="loading || saving">
@@ -257,6 +265,7 @@ function locationLabel(): string {
             <n-select
               v-model:value="editRating"
               :options="ratingOptions"
+              :render-label="renderRatingStars"
               placeholder="评分"
               clearable
             />
@@ -266,29 +275,34 @@ function locationLabel(): string {
 
         <n-card title="操作" class="action-pane">
           <n-space vertical>
-            <n-button :disabled="file.viewed" @click="markViewed">
-              {{ file.viewed ? "已查看" : "标记已看" }}
-            </n-button>
             <n-button
               v-if="file.current_location === 'identified'"
               @click="archive"
             >
+              <template #icon>
+                <Archive :size="14" :stroke-width="1.8" />
+              </template>
               归档
             </n-button>
             <n-button
               v-if="file.current_location === 'identified'"
               @click="moveToWillDelete"
             >
+              <template #icon>
+                <Trash2 :size="14" :stroke-width="1.8" />
+              </template>
               移到回收站
             </n-button>
             <n-button
               v-if="file.current_location === 'will_delete' || file.current_location === 'archived'"
               @click="restore"
             >
+              <template #icon>
+                <RotateCcw :size="14" :stroke-width="1.8" />
+              </template>
               取回到已入库
             </n-button>
             <div class="status-row">
-              <n-tag v-if="file.viewed" type="success">已看</n-tag>
               <n-tag :type="file.current_location === 'will_delete' ? 'warning' : (file.current_location === 'archived' ? 'info' : 'default')">
                 {{ locationLabel() }}
               </n-tag>
