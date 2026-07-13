@@ -75,127 +75,103 @@ const apiLines = computed(() => [
 
 <template>
   <div class="page">
-    <header class="page-header">
-      <h1>设置</h1>
-      <span class="count mono">运行时 + API</span>
+    <header class="flex items-baseline justify-between gap-4">
+      <h1 class="text-heading-sm font-medium text-snow tracking-body">设置</h1>
+      <span class="font-mono text-caption text-smoke tracking-[0.1em]">运行时 + API</span>
     </header>
-  <n-spin :show="scanning">
-    <n-space vertical size="large">
-      <n-card title="路径">
-        <n-spin :show="!store.data">
-          <div v-if="store.data">
-            <div>资源目录: <n-tag>{{ store.data.resources_dir }}</n-tag></div>
-            <div style="margin-top: 4px">待识别: <n-tag>{{ store.data.inbox_dir }}</n-tag></div>
-            <div style="margin-top: 4px">已识别: <n-tag>{{ store.data.identified_dir }}</n-tag></div>
-            <div style="margin-top: 4px">待删除: <n-tag>{{ store.data.will_delete_dir }}</n-tag></div>
-            <div style="margin-top: 4px">封面: <n-tag>{{ store.data.covers_dir }}</n-tag></div>
-          </div>
-        </n-spin>
-        <n-button size="small" style="margin-top: 8px" @click="store.load()">
-          刷新
-        </n-button>
-      </n-card>
-
-      <n-card title="HTTP 端口">
-        <p style="color: #aaa; font-size: 12px; margin-top: 0">
-          锁定端口 = 应用启动时尝试绑定这个端口；占用则按 100/200/300ms 重试 3 次后回退到随机端口。
-          关闭锁定 = 每次启动由操作系统分配空闲端口。
-        </p>
-        <n-space align="center">
-          <n-input-number
-            v-model:value="portInput"
-            :min="0"
-            :max="65535"
-            :disabled="!portLocked"
-            placeholder="0 = 随机"
-            style="width: 140px"
-          />
-          <n-switch v-model:value="portLocked" />
-          <span style="color: #aaa; font-size: 12px">
-            {{ portLocked ? "固定端口" : "随机端口" }}
-          </span>
-          <n-button type="primary" size="small" @click="savePort">
-            保存（重启后生效）
+    <n-spin :show="scanning">
+      <n-space vertical size="large">
+        <n-card title="路径">
+          <n-spin :show="!store.data">
+            <div v-if="store.data" class="flex flex-col gap-1">
+              <div>资源目录: <n-tag>{{ store.data.resources_dir }}</n-tag></div>
+              <div>待识别: <n-tag>{{ store.data.inbox_dir }}</n-tag></div>
+              <div>已识别: <n-tag>{{ store.data.identified_dir }}</n-tag></div>
+              <div>待删除: <n-tag>{{ store.data.will_delete_dir }}</n-tag></div>
+              <div>封面: <n-tag>{{ store.data.covers_dir }}</n-tag></div>
+            </div>
+          </n-spin>
+          <n-button size="small" class="mt-2" @click="store.load()">
+            刷新
           </n-button>
-          <n-tag v-if="store.data" size="small">
-            当前：{{ store.data.http_port }}（{{ store.data.http_port_locked ? "已锁定" : "随机" }}）
-          </n-tag>
-        </n-space>
-      </n-card>
+        </n-card>
 
-      <n-card title="HTTP Token">
-        <p style="color: #aaa; font-size: 12px; margin-top: 0">
-          浏览器扩展和外部脚本调用 HTTP API 时需要在 <code>Authorization: Bearer &lt;token&gt;</code> 头里带这个值。
-          重新生成后旧 Token 立刻失效。
-        </p>
-        <n-space align="center" style="width: 100%">
-          <n-code :code="store.data?.auth_token ?? ''" style="flex: 1; overflow-x: auto" />
-          <n-button size="small" @click="copy(store.data?.auth_token ?? '')">复制</n-button>
-          <n-button size="small" type="warning" @click="regenToken">重新生成</n-button>
-        </n-space>
-      </n-card>
+        <n-card title="HTTP 端口">
+          <p class="text-caption text-silver-mist">
+            锁定端口 = 应用启动时尝试绑定这个端口；占用则按 100/200/300ms 重试 3 次后回退到随机端口。
+            关闭锁定 = 每次启动由操作系统分配空闲端口。
+          </p>
+          <n-space align="center">
+            <n-input-number
+              v-model:value="portInput"
+              :min="0"
+              :max="65535"
+              :disabled="!portLocked"
+              placeholder="0 = 随机"
+              class="w-[140px]"
+            />
+            <n-switch v-model:value="portLocked" />
+            <span class="text-caption text-silver-mist">
+              {{ portLocked ? "固定端口" : "随机端口" }}
+            </span>
+            <n-button type="primary" size="small" @click="savePort">
+              保存（重启后生效）
+            </n-button>
+            <n-tag v-if="store.data" size="small">
+              当前：{{ store.data.http_port }}（{{ store.data.http_port_locked ? "已锁定" : "随机" }}）
+            </n-tag>
+          </n-space>
+        </n-card>
 
-      <n-card title="Inbox 目录">
-        <p style="color: #aaa; font-size: 12px; margin-top: 0">
-          待识别压缩包放这里，应用会自动处理。
-        </p>
-        <n-input :value="store.data?.inbox_dir ?? ''" readonly />
-      </n-card>
+        <n-card title="HTTP Token">
+          <p class="text-caption text-silver-mist">
+            浏览器扩展和外部脚本调用 HTTP API 时需要在 <code>Authorization: Bearer &lt;token&gt;</code> 头里带这个值。
+            重新生成后旧 Token 立刻失效。
+          </p>
+          <n-space align="center" class="w-full">
+            <n-code :code="store.data?.auth_token ?? ''" class="min-w-0 flex-1 overflow-x-auto" />
+            <n-button size="small" @click="copy(store.data?.auth_token ?? '')">复制</n-button>
+            <n-button size="small" type="warning" @click="regenToken">重新生成</n-button>
+          </n-space>
+        </n-card>
 
-      <n-card title="HTTP API（供浏览器扩展使用）">
-        <p style="color: #aaa; font-size: 12px">
-          本应用在 127.0.0.1 暴露本地 HTTP API，给外部工具（浏览器扩展、脚本）查询本库。
-          除 <code>/api/health</code> 外所有路由都需要带 <code>Authorization: Bearer &lt;token&gt;</code> 头（见上方 HTTP Token 卡片）。
-        </p>
-        <div style="margin-bottom: 8px">
-          <span>接口地址: </span>
-          <n-tag type="success">{{ store.apiBase }}</n-tag>
-          <n-button
-            size="tiny"
-            style="margin-left: 8px"
-            @click="copy(store.apiBase)"
-          >
-            Copy
-          </n-button>
-        </div>
-        <n-divider style="margin: 12px 0" />
-        <div style="font-family: monospace; font-size: 12px">
-          <div v-for="line in apiLines" :key="line" style="margin-bottom: 4px">
-            <n-code :code="line" />
+        <n-card title="Inbox 目录">
+          <p class="text-caption text-silver-mist">
+            待识别压缩包放这里，应用会自动处理。
+          </p>
+          <n-input :value="store.data?.inbox_dir ?? ''" readonly />
+        </n-card>
+
+        <n-card title="HTTP API（供浏览器扩展使用）">
+          <p class="text-caption text-silver-mist">
+            本应用在 127.0.0.1 暴露本地 HTTP API，给外部工具（浏览器扩展、脚本）查询本库。
+            除 <code>/api/health</code> 外所有路由都需要带 <code>Authorization: Bearer &lt;token&gt;</code> 头（见上方 HTTP Token 卡片）。
+          </p>
+          <div class="mb-2">
+            <span>接口地址: </span>
+            <n-tag type="success">{{ store.apiBase }}</n-tag>
+            <n-button size="tiny" class="ml-2" @click="copy(store.apiBase)">
+              Copy
+            </n-button>
           </div>
-        </div>
-      </n-card>
+          <n-divider class="my-3!" />
+          <div class="font-mono text-caption">
+            <div v-for="line in apiLines" :key="line" class="mb-1">
+              <n-code :code="line" />
+            </div>
+          </div>
+        </n-card>
 
-      <n-card title="扫描">
-        <p style="color: #aaa; font-size: 12px">
-          后台监听 <code>resources/doujinshi/</code>，自动处理新放入的压缩包。如果你怀疑漏掉了某个文件，可以点下面手动扫描。
-        </p>
-        <n-space>
-          <n-button type="primary" @click="runScan">手动扫描待识别目录</n-button>
-          <n-tag v-if="scanResult !== null">上次处理: {{ scanResult }} 个</n-tag>
-        </n-space>
-      </n-card>
-    </n-space>
-  </n-spin>
+        <n-card title="扫描">
+          <p class="text-caption text-silver-mist">
+            后台监听 <code>resources/doujinshi/</code>，自动处理新放入的压缩包。如果你怀疑漏掉了某个文件，可以点下面手动扫描。
+          </p>
+          <n-space>
+            <n-button type="primary" @click="runScan">手动扫描待识别目录</n-button>
+            <n-tag v-if="scanResult !== null">上次处理: {{ scanResult }} 个</n-tag>
+          </n-space>
+        </n-card>
+      </n-space>
+    </n-spin>
   </div>
 </template>
-
-<style scoped>
-.page-header {
-  display: flex;
-  align-items: baseline;
-  justify-content: space-between;
-  gap: var(--spacing-16);
-}
-.page-header h1 {
-  font-size: var(--text-heading-sm);
-  font-weight: var(--font-weight-medium);
-  color: var(--color-snow);
-  letter-spacing: var(--tracking-body);
-}
-.page-header .count {
-  font-size: var(--text-caption);
-  color: var(--color-smoke);
-  letter-spacing: 0.1em;
-}
-</style>
