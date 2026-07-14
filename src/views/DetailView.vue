@@ -94,13 +94,19 @@ const ratingOptions = [
 
 function renderRatingStars(option: { value: number, label: string }) {
   const v = (editRating.value ?? 0) as number
-  const filled = v >= option.value
-  return Array.from({ length: option.value }, () =>
-    h(Star, {
-      size: 14,
-      "stroke-width": 1.5,
-      fill: filled ? "currentColor" : "none",
-      style: "color: var(--color-phosphor-green);",
+  return h(
+    "span",
+    { style: "display: inline-flex; gap: 1px; align-items: center;" },
+    Array.from({ length: option.value }, (_, i) => {
+      const filled = v >= i + 1
+      return h(Star, {
+        size: 14,
+        "stroke-width": 1.5,
+        fill: "currentColor",
+        style: filled
+          ? "color: var(--color-phosphor-green);"
+          : "color: var(--color-phosphor-green); opacity: 0.4;",
+      })
     }),
   )
 }
@@ -211,12 +217,6 @@ function locationLabel(): string {
       <h1 class="text-heading-sm font-medium text-snow tracking-body">
         {{ file?.title ?? `文件 #${id}` }}
       </h1>
-      <span
-        v-if="file"
-        class="font-mono text-caption text-smoke tracking-[0.1em]"
-      >
-        · id {{ file.id }}
-      </span>
     </header>
     <n-spin :show="loading || saving">
       <div v-if="file" class="detail-grid">
@@ -275,44 +275,56 @@ function locationLabel(): string {
 
         <n-card title="操作" class="action-pane">
           <n-space vertical>
-            <n-button
-              v-if="file.current_location === 'identified'"
-              @click="archive"
-            >
-              <template #icon>
-                <Archive :size="14" :stroke-width="1.8" />
-              </template>
-              归档
-            </n-button>
-            <n-button
-              v-if="file.current_location === 'identified'"
-              @click="moveToWillDelete"
-            >
-              <template #icon>
-                <Trash2 :size="14" :stroke-width="1.8" />
-              </template>
-              移到回收站
-            </n-button>
-            <n-button
-              v-if="file.current_location === 'will_delete' || file.current_location === 'archived'"
-              @click="restore"
-            >
-              <template #icon>
-                <RotateCcw :size="14" :stroke-width="1.8" />
-              </template>
-              取回到已入库
-            </n-button>
-            <div class="status-row">
-              <n-tag :type="file.current_location === 'will_delete' ? 'warning' : (file.current_location === 'archived' ? 'info' : 'default')">
-                {{ locationLabel() }}
-              </n-tag>
-              <n-tag v-if="!file.has_physical_file" type="error">文件丢失</n-tag>
-            </div>
             <div class="file-meta mono">
               <div>id: {{ file.id }}</div>
               <div>hash: {{ file.hash.slice(0, 16) }}…</div>
-              <div>{{ file.current_location }}</div>
+              <div>location: {{ file.current_location }}</div>
             </div>
+            <div class="status-block">
+              <span class="status-label">状态</span>
+              <div class="status-row">
+                <n-tag :type="file.current_location === 'will_delete' ? 'warning' : (file.current_location === 'archived' ? 'info' : 'default')">
+                  {{ locationLabel() }}
+                </n-tag>
+                <n-tag v-if="!file.has_physical_file" type="error">文件丢失</n-tag>
+              </div>
+            </div>
+            <div class="action-divider" />
+            <n-space>
+              <n-button
+                v-if="file.current_location === 'identified'"
+                type="primary"
+                ghost
+                @click="archive"
+              >
+                <template #icon>
+                  <Archive :size="14" :stroke-width="1.8" />
+                </template>
+                归档
+              </n-button>
+              <n-button
+                v-if="file.current_location === 'identified'"
+                type="warning"
+                ghost
+                @click="moveToWillDelete"
+              >
+                <template #icon>
+                  <Trash2 :size="14" :stroke-width="1.8" />
+                </template>
+                移到回收站
+              </n-button>
+              <n-button
+                v-if="file.current_location === 'will_delete' || file.current_location === 'archived'"
+                type="primary"
+                ghost
+                @click="restore"
+              >
+                <template #icon>
+                  <RotateCcw :size="14" :stroke-width="1.8" />
+                </template>
+                取回到已入库
+              </n-button>
+            </n-space>
           </n-space>
         </n-card>
       </div>
@@ -359,7 +371,7 @@ function locationLabel(): string {
   gap: 8px;
   /* 详情页是单页内容，预览 grid 占满主区可视高度，溢出滚动而非占满屏。
      calc 100vh 减去 header+padding+card title 高度：避免在大窗口下被切到底。 */
-  max-height: calc(100vh - 200px);
+  max-height: calc(100vh - 102px);
   min-height: 0;
   overflow-y: auto;
   padding: 4px;
@@ -401,6 +413,23 @@ function locationLabel(): string {
 @keyframes skeleton-shimmer {
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
+}
+.status-block {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.status-label {
+  font-size: 11px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--color-smoke);
+}
+.action-divider {
+  height: 1px;
+  background: var(--color-border);
+  margin: 4px 0;
 }
 .status-row { display: flex; gap: 6px; flex-wrap: wrap; }
 .file-meta {
