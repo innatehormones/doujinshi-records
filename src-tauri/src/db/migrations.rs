@@ -112,7 +112,7 @@ pub async fn init_schema(conn: &DatabaseConnection) -> Result<()> {
 // never edit an existing one. Each entry must be idempotent because
 // `init_schema_versioned` may be replayed against an already-upgraded DB.
 
-pub const CURRENT_VERSION: i64 = 5;
+pub const CURRENT_VERSION: i64 = 6;
 
 /// (version, human-readable name, body of the migration SQL to apply when
 /// moving from `version - 1` to `version`). Each migration must guard itself
@@ -149,6 +149,22 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
             reason TEXT NOT NULL,
             first_seen_at TEXT NOT NULL
         )",
+    ),
+    (
+        6,
+        "fold physically_deleted into current_location='permanently_deleted'",
+        // 1) 旧 (physically_deleted) 上的两个索引必须先删，SQLite 拒绝 DROP
+        //    COLUMN 时留有引用该列的索引。
+        // 2) 把现有 physically_deleted=1 的行升级到 5 状态机的 permanently_deleted
+        //    —— 状态机现在能完整表达"用户已永久删除"这个意图。
+        // 3) 砍掉旧列。
+        // 4) 新加 (current_location, created_at) 复合索引，替代原来给
+        //    search 计数 + ORDER BY created_at 用的 (physically_deleted, created_at)。
+        "DROP INDEX IF EXISTS idx_doujinshi_physdel;\
+         DROP INDEX IF EXISTS idx_doujinshi_physdel_created;\
+         UPDATE doujinshi_file SET current_location = 'permanently_deleted' WHERE physically_deleted = 1;\
+         ALTER TABLE doujinshi_file DROP COLUMN physically_deleted;\
+         CREATE INDEX IF NOT EXISTS idx_doujinshi_location_created ON doujinshi_file(current_location, created_at)",
     ),
 ];
 

@@ -170,12 +170,19 @@ pub async fn identify_file(
     // (step 6) still guards against a same-renamed-filename file
     // already sitting in identified_dir.
     let collision = if force_rename.is_none() {
+        // 在 4 个"活的"状态里查 (filename, ext) 撞名——inbox 还没入库不算
+        // 占用，permanently_deleted 是 ghost 不再参与匹配。`force_rename`
+        // 表示调用方已确认是别名冲突，强制走"加后缀"路径，绕过该检查。
         doujinshi_file::Entity::find()
             .filter(
                 doujinshi_file::Column::Filename
                     .eq(&filename)
                     .and(doujinshi_file::Column::Ext.eq(&ext))
-                    .and(doujinshi_file::Column::PhysicallyDeleted.eq(false)),
+                    .and(doujinshi_file::Column::CurrentLocation.is_in([
+                        "identified",
+                        "will_delete",
+                        "archived",
+                    ])),
             )
             .one(conn)
             .await?
@@ -411,7 +418,6 @@ async fn finalize_identification(
         current_location: Set("identified".into()),
         cover_path: Set(cover_rel),
         marked_for_delete: Set(false),
-        physically_deleted: Set(false),
         viewed: Set(false),
         note: Set(None),
         created_at: Set(now),
@@ -480,7 +486,6 @@ pub async fn reactivate_row(
     let mut am: doujinshi_file::ActiveModel = row.into();
     am.current_path = Set(dest.to_string_lossy().into_owned());
     am.current_location = Set("identified".into());
-    am.physically_deleted = Set(false);
     am.updated_at = Set(chrono::Utc::now());
     am.update(conn).await?;
     record_event(conn, row_id, "reactivated", None).await?;
@@ -609,8 +614,9 @@ Archive: test.rar
             ext: Set("zip".into()),
             size_bytes: Set(4),
             current_path: Set("placeholder".into()),
-            current_location: Set("archived".into()),
-            physically_deleted: Set(true),
+            // reactivate_row 的来源是 permanently_deleted：用户把同 hash 的
+            // 新文件拖进 inbox，把 ghost 行复活回 identified。
+            current_location: Set("permanently_deleted".into()),
             created_at: Set(now),
             updated_at: Set(now),
             ..Default::default()
@@ -623,6 +629,5 @@ Archive: test.rar
         assert!(identified.join("f.zip").exists(), "dest 应在 identified/");
         let row = doujinshi_file::Entity::find_by_id(id).one(&conn).await.unwrap().unwrap();
         assert_eq!(row.current_location, "identified");
-        assert!(!row.physically_deleted);
     }
 }

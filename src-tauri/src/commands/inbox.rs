@@ -117,11 +117,10 @@ pub async fn resolve_conflict_inner(
             }
         }
         ConflictAction::ReplaceB => {
-            // Delete A's zip on disk and mark its row
-            // physically_deleted so the collision check in
-            // `identify_file` doesn't re-trip on A's filename when
-            // B tries to land. A's row stays so the user can still
-            // see the entry in history.
+            // 把 A 行的状态推进到 permanently_deleted：A 的 zip best-effort
+            // 删掉、A 的行留在历史里、current_location 落到 permanently_deleted
+            // —— collision check（`identify_file` 看 current_location != permanently_deleted）
+            // 后续 B 就能用 A 的 filename 正常入库，不撞名。
             let a_row = doujinshi_file::Entity::find_by_id(row.a_file_id)
                 .one(conn)
                 .await?;
@@ -131,7 +130,8 @@ pub async fn resolve_conflict_inner(
                     let _ = std::fs::remove_file(a_path);
                 }
                 let mut am: doujinshi_file::ActiveModel = a.into();
-                am.physically_deleted = Set(true);
+                am.current_location = Set("permanently_deleted".into());
+                am.has_physical_file = Set(false);
                 am.updated_at = Set(chrono::Utc::now());
                 let _ = am.update(conn).await;
             }

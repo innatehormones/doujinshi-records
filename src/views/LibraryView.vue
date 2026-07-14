@@ -28,7 +28,7 @@ const locationOptions = [
   { label: "已入库", value: "identified" },
   { label: "归档", value: "archived" },
   { label: "回收站", value: "will_delete" },
-  { label: "已删除", value: "physically_deleted" },
+  { label: "已删除", value: "permanently_deleted" },
 ]
 
 const apiBase = computed(() => settings.apiBase)

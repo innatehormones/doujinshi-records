@@ -18,7 +18,6 @@ pub struct Model {
     pub current_location: String,
     pub cover_path: Option<String>,
     pub marked_for_delete: bool,
-    pub physically_deleted: bool,
     pub has_physical_file: bool,
     pub viewed: bool,
     pub note: Option<String>,

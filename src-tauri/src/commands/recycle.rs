@@ -22,9 +22,9 @@ pub async fn list_recycle(
     gone_limit: Option<u64>,
     gone_offset: Option<u64>,
 ) -> AppResult<RecyclePage> {
-    // V3: present/gone 改按 has_physical_file 分组——present = 文件仍在，
-    // gone = 文件已被外部清走/已被 permanent_delete 真删。FileSummary 不
-    // 暴露 physically_deleted 字段所以这里走 has_physical_file 通道。
+    // V3: present/gone 按 has_physical_file 分组——present = 文件仍在，
+    // gone = 文件已被外部清走/已被 permanent_delete 真删。
+    // permanently_deleted 状态的行不在这里（current_location != will_delete）。
     let present_limit = present_limit.unwrap_or(50);
     let present_offset = present_offset.unwrap_or(0);
     let gone_limit = gone_limit.unwrap_or(50);
@@ -77,21 +77,16 @@ pub async fn list_recycle(
 #[tauri::command]
 pub async fn permanent_delete(state: State<'_, AppState>, id: i64) -> AppResult<()> {
     crate::commands::guards::ensure_no_open_conflict(&state.conn, id).await?;
-    let file = doujinshi_file::Entity::find_by_id(id)
-        .one(&state.conn)
-        .await?
-        .ok_or(AppError::NotFound)?;
-    if !file.physically_deleted {
-        let path = std::path::PathBuf::from(&file.current_path);
-        if path.exists() {
-            std::fs::remove_file(&path)?;
-        }
-    }
-    let mut am: doujinshi_file::ActiveModel = file.into();
-    am.physically_deleted = Set(true);
-    am.has_physical_file = Set(false);
-    am.updated_at = Set(chrono::Utc::now());
-    am.update(&state.conn).await?;
+    crate::services::state_machine::transition_with_dirs(
+        &state.conn,
+        id,
+        crate::services::state_machine::TransitionKind::PermanentlyDelete,
+        &state.config.identified_dir(),
+        &state.config.will_delete_dir(),
+        &state.config.archived_dir(),
+    )
+    .await?;
+    state.preview_cache.invalidate(id);
     crate::services::identifier::record_event(&state.conn, id, "deleted", None)
         .await
         .map_err(|e| AppError::Other(e.to_string()))?;

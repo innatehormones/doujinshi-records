@@ -109,7 +109,7 @@ export const useLibraryStore = defineStore("library", () => {
   const queryInput = ref("")
   const query = ref("")
   const locationFilter = ref<
-    null | "identified" | "will_delete" | "archived" | "physically_deleted"
+    null | "identified" | "will_delete" | "archived" | "permanently_deleted"
   >(null)
   const loading = ref(false)
   /// 顶部社团 chip——单独调用 top_circles，不从当前页 items 聚合（聚合只算

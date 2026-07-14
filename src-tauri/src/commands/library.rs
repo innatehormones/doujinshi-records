@@ -20,10 +20,7 @@ pub async fn list_library(
     let conn = &state.conn;
     let mut query = doujinshi_file::Entity::find();
     if let Some(loc) = location.as_deref().filter(|s| !s.is_empty() && *s != "all") {
-        query = match loc {
-            "physically_deleted" => query.filter(doujinshi_file::Column::PhysicallyDeleted.eq(true)),
-            other => query.filter(doujinshi_file::Column::CurrentLocation.eq(other)),
-        };
+        query = query.filter(doujinshi_file::Column::CurrentLocation.eq(loc));
     }
     if let Some(qs) = q.as_deref().filter(|s| !s.is_empty()) {
         let pattern = format!("%{}%", qs);

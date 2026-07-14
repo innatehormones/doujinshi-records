@@ -218,13 +218,17 @@ async fn resolve_replace_b_promotes_b_to_library() {
         "file at A's path should be B's bytes, not A's"
     );
     assert!(!env.inbox_dir.join("replace_b.zip").exists());
-    // A row remains (history) and is marked physically_deleted
+    // A row remains (history) and is now permanently_deleted
     let a = doujinshi_file::Entity::find_by_id(a_id)
         .one(&env.conn)
         .await
         .unwrap()
         .unwrap();
-    assert!(a.physically_deleted, "A should be marked physically_deleted");
+    assert_eq!(
+        a.current_location, "permanently_deleted",
+        "A should be in permanently_deleted state"
+    );
+    assert!(!a.has_physical_file);
     // B got a new doujinshi_file row
     let rows = doujinshi_file::Entity::find()
         .filter(doujinshi_file::Column::Filename.eq("replace_b.zip"))
@@ -232,7 +236,10 @@ async fn resolve_replace_b_promotes_b_to_library() {
         .await
         .unwrap();
     assert_eq!(rows.len(), 2, "expected A + B rows, got {}", rows.len());
-    let b_row = rows.iter().find(|r| !r.physically_deleted).unwrap();
+    let b_row = rows
+        .iter()
+        .find(|r| r.current_location != "permanently_deleted")
+        .unwrap();
     assert_ne!(b_row.hash, a.hash, "B's row should hold a different hash than A");
     assert_eq!(b_row.filename, "replace_b.zip");
     assert!(conflict_is_resolved(&env.conn, c_id).await);

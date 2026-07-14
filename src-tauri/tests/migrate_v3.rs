@@ -1,9 +1,10 @@
 use doujinshi_records::db::{self, entities::doujinshi_file, migrations};
-use sea_orm::{ConnectionTrait, EntityTrait, Statement};
+use sea_orm::{ColumnTrait, ConnectionTrait, EntityTrait, QueryFilter, Statement};
 
-// V2 → V3 迁移：DB schema 是 V2 风格（含 rating + marked_for_delete +
+// V2 → V3 → V6 迁移测试：DB schema 是 V2 风格（含 rating + marked_for_delete +
 // physically_deleted，不含 has_physical_file），且有一行 V2 风格的数据。
-// 跑完 init_schema_versioned 后，行应保留 + 列 + dirty_data 表就位。
+// 跑完 init_schema_versioned 后，行应保留 + 列 + dirty_data 表就位 + v6 把
+// physically_deleted 折进 current_location。
 
 #[tokio::test]
 async fn v2_upgrade_to_v3_preserves_existing_rows() {
@@ -15,7 +16,7 @@ async fn v2_upgrade_to_v3_preserves_existing_rows() {
     migrations::init_schema(&conn).await.unwrap();
 
     // 2) 用裸 SQL 插入一行 V2 风格数据（绕过 SeaORM ActiveModel，
-    //    因为当前 entity 定义包含 has_physical_file 字段）。
+    //    因为当前 entity 定义已不含 physically_deleted）。
     let backend = conn.get_database_backend();
     conn.execute(Statement::from_string(
         backend.clone(),
@@ -34,9 +35,10 @@ async fn v2_upgrade_to_v3_preserves_existing_rows() {
     .await
     .unwrap();
 
-    // 3) V3 启动：跑 init_schema_versioned，v1 已被 init_schema 应用，
+    // 3) 启动：跑 init_schema_versioned，v1 已被 init_schema 应用，
     //    runner 接着应用 v2/v3 (no-op if already applied)、v4 (add
-    //    has_physical_file)、v5 (create dirty_data)。
+    //    has_physical_file)、v5 (create dirty_data)、v6 (fold
+    //    physically_deleted into current_location + drop column)。
     migrations::init_schema_versioned(&conn).await.unwrap();
 
     // 4) 行还在
@@ -50,16 +52,16 @@ async fn v2_upgrade_to_v3_preserves_existing_rows() {
         "V2 upgrade should default has_physical_file to true"
     );
 
-    // 5) V3 列就位
+    // 5) v6 之后 physically_deleted 列已砍
     let cols = conn
         .query_all(Statement::from_string(
             backend.clone(),
-            "SELECT name FROM pragma_table_info('doujinshi_file') WHERE name='has_physical_file'"
+            "SELECT name FROM pragma_table_info('doujinshi_file') WHERE name='physically_deleted'"
                 .to_string(),
         ))
         .await
         .unwrap();
-    assert_eq!(cols.len(), 1, "has_physical_file column should exist");
+    assert_eq!(cols.len(), 0, "physically_deleted column should be dropped after v6");
 
     // 6) dirty_data 表就位
     let tbls = conn
@@ -71,6 +73,59 @@ async fn v2_upgrade_to_v3_preserves_existing_rows() {
         .await
         .unwrap();
     assert_eq!(tbls.len(), 1, "dirty_data table should exist");
+}
+
+/// V3 时代（v5 schema）但行里 physically_deleted=1 的库升到 v6：
+/// 应被改成 current_location='permanently_deleted'，列被砍。
+#[tokio::test]
+async fn v3_physically_deleted_rows_migrate_to_permanently_deleted() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("data.db");
+    let conn = db::connect(&db_path).await.unwrap();
+
+    // 1) 用 v1 + v2..v5 模拟一个 v5 schema 的库
+    migrations::init_schema_versioned(&conn).await.unwrap();
+    let backend = conn.get_database_backend();
+
+    // 2) 直接 SQL 塞两行：一行 physically_deleted=0（普通行）、一行
+    //    physically_deleted=1（升 v6 前是"已物理删除"语义）。
+    let mkrow = |title: &str, pd: i64| {
+        let stmt = format!(
+            "INSERT INTO doujinshi_file (title, filename, hash, ext, size_bytes, current_path, \
+             current_location, marked_for_delete, physically_deleted, has_physical_file, viewed, \
+             created_at, updated_at) VALUES (\
+             '{}', 'a.zip', '{}', 'zip', 0, 'doujinshi-identified/a.zip', 'identified', 0, {}, 1, 0, \
+             '2026-01-01T00:00:00Z', '2026-01-01T00:00:00Z')",
+            title,
+            title, // hash 用 title 当 dummy
+            pd,
+        );
+        Statement::from_string(backend.clone(), stmt)
+    };
+    conn.execute(mkrow("alive", 0)).await.unwrap();
+    conn.execute(mkrow("dead", 1)).await.unwrap();
+
+    // 3) 跑 v6（init_schema_versioned 在已升到 v5 的库里只跑 v6）
+    migrations::init_schema_versioned(&conn).await.unwrap();
+
+    // 4) alive 仍 identified
+    let alive = doujinshi_file::Entity::find()
+        .filter(doujinshi_file::Column::Title.eq("alive"))
+        .one(&conn)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(alive.current_location, "identified");
+
+    // 5) dead 已落 permanently_deleted
+    let dead = doujinshi_file::Entity::find()
+        .filter(doujinshi_file::Column::Title.eq("dead"))
+        .one(&conn)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(dead.current_location, "permanently_deleted");
+    assert!(!dead.has_physical_file, "permanently_deleted 行应同步 has_physical_file=false");
 }
 
 #[tokio::test]

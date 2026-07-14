@@ -27,13 +27,7 @@ pub async fn search(
     State(s): State<ApiState>,
     Query(p): Query<SearchParams>,
 ) -> Json<serde_json::Value> {
-    let mut q = match p.status.as_deref() {
-        // 物理删除记录：放行不隐。
-        Some("physically_deleted") => doujinshi_file::Entity::find()
-            .filter(doujinshi_file::Column::PhysicallyDeleted.eq(true)),
-        _ => doujinshi_file::Entity::find()
-            .filter(doujinshi_file::Column::PhysicallyDeleted.eq(false)),
-    };
+    let mut q = doujinshi_file::Entity::find();
     if let Some(text) = p.q.as_deref().filter(|s| !s.is_empty()) {
         let pat = format!("%{}%", text);
         q = q.filter(
@@ -43,14 +37,13 @@ pub async fn search(
                 .or(doujinshi_file::Column::Filename.like(&pat)),
         );
     }
-    if let Some(st) = p.status.as_deref() {
-        q = match st {
-            "physically_deleted" => q, // 上面已用，不再叠加过滤
-            "identified" | "will_delete" | "archived" => {
-                q.filter(doujinshi_file::Column::CurrentLocation.eq(st))
-            }
-            _ => q,
-        };
+    if let Some(st) = p.status.as_deref().filter(|s| !s.is_empty()) {
+        // status 现在的语义 = 5 状态机里的 location 之一：
+        // identified / will_delete / archived / permanently_deleted
+        // 不传 / 不识别 → 不过滤
+        if matches!(st, "identified" | "will_delete" | "archived" | "permanently_deleted") {
+            q = q.filter(doujinshi_file::Column::CurrentLocation.eq(st));
+        }
     }
     let limit = p.limit.unwrap_or(50);
     let offset = p.offset.unwrap_or(0);
