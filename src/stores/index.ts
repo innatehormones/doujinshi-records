@@ -38,25 +38,48 @@ export const useSettingsStore = defineStore("settings", () => {
 /// 主题状态：dark / light。持久化到 localStorage，启动时读不到则
 /// 跟随系统偏好，再读不到则默认 dark（与现有设计对齐）。
 ///
-/// 切换流程：toggle() 写 isDark + localStorage + 切 document.documentElement
+/// 切换流程：setMode() 写 mode + localStorage + 切 document.documentElement
 /// 的 data-theme 属性，tailwind.css 的 :root[data-theme='light'] 立刻接管
 /// 所有 CSS 变量。Naive UI 组件色由 App.vue 配合
 /// `buildThemeOverrides(isDark)` 同步生效。
+///
+/// 模式：用户偏好持久化（"light" / "dark" / "system"）。
+/// "system" 模式订阅 prefers-color-scheme，系统切换时自动跟随。
+export type ThemeMode = "system" | "light" | "dark"
 export const useThemeStore = defineStore("theme", () => {
   const STORAGE_KEY = "theme"
-  const isDark = ref(true)
+  const mode = ref<ThemeMode>("system")
+  /// 系统偏好单独存一个 ref，监听 change 事件刷新——和 mode 解耦。
+  const systemPrefersDark = ref(true)
   let initialized = false
+
+  if (typeof window !== "undefined") {
+    const mql = window.matchMedia?.("(prefers-color-scheme: dark)")
+    if (mql) {
+      systemPrefersDark.value = mql.matches
+      mql.addEventListener("change", (e) => {
+        systemPrefersDark.value = e.matches
+      })
+    }
+  }
+
+  /// 暴露给外部的"当前是不是深色"——system 模式跟随系统，否则按用户选择。
+  const isDark = computed(() =>
+    mode.value === "system" ? systemPrefersDark.value : mode.value === "dark",
+  )
 
   function applyToDom() {
     if (typeof document === "undefined") return
     document.documentElement.dataset.theme = isDark.value ? "dark" : "light"
   }
 
-  function toggle() {
-    isDark.value = !isDark.value
-    applyToDom()
+  /// mode 或系统偏好变化都触发 DOM 更新——mode 是用户切换，系统是自动跟随。
+  watch([mode, systemPrefersDark], () => applyToDom())
+
+  function setMode(next: ThemeMode) {
+    mode.value = next
     try {
-      localStorage.setItem(STORAGE_KEY, isDark.value ? "dark" : "light")
+      localStorage.setItem(STORAGE_KEY, next)
     } catch {}
   }
 
@@ -65,14 +88,14 @@ export const useThemeStore = defineStore("theme", () => {
     initialized = true
     try {
       const saved = localStorage.getItem(STORAGE_KEY)
-      if (saved === "light") isDark.value = false
-      else if (saved === "dark") isDark.value = true
-      else if (window.matchMedia?.("(prefers-color-scheme: light)").matches) isDark.value = false
+      if (saved === "light" || saved === "dark" || saved === "system") {
+        mode.value = saved
+      }
     } catch {}
     applyToDom()
   }
 
-  return { isDark, toggle, init }
+  return { mode, isDark, setMode, init }
 })
 
 export const useLibraryStore = defineStore("library", () => {

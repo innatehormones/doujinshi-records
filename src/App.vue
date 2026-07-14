@@ -26,6 +26,7 @@ import {
   Settings as SettingsIcon,
   Sun,
   Moon,
+  SunMoon,
 } from "@lucide/vue"
 import { RouterView, useRoute, useRouter } from "vue-router"
 import { useThemeStore } from "@/stores"
@@ -60,6 +61,22 @@ function goSettings() {
 
 const themeOverrides = computed(() => buildThemeOverrides(themeStore.isDark))
 const naiveTheme = computed(() => (themeStore.isDark ? darkTheme : lightTheme))
+
+/// sider 上的主题按钮图标：system → SunMoon（半日半月），否则按当前生效显示。
+const themeIcon = computed(() => {
+  if (themeStore.mode === "system") return SunMoon
+  return themeStore.isDark ? Moon : Sun
+})
+
+/// 单按钮循环切换：system → light → dark → system。
+const NEXT_MODE: Record<string, "system" | "light" | "dark"> = {
+  system: "light",
+  light: "dark",
+  dark: "system",
+}
+function cycleTheme() {
+  themeStore.setMode(NEXT_MODE[themeStore.mode] ?? "system")
+}
 </script>
 
 <template>
@@ -91,17 +108,21 @@ const naiveTheme = computed(() => (themeStore.isDark ? darkTheme : lightTheme))
               <template #trigger>
                 <button
                   class="sider-icon-btn"
-                  :aria-label="themeStore.isDark ? '切换到浅色主题' : '切换到深色主题'"
-                  @click="themeStore.toggle"
+                  :aria-label="`主题：${themeStore.mode === 'system' ? '随系统' : themeStore.mode === 'light' ? '浅色' : '深色'}`"
+                  @click="cycleTheme"
                 >
                   <component
-                    :is="themeStore.isDark ? Sun : Moon"
+                    :is="themeIcon"
                     :size="22"
                     :stroke-width="1.6"
                   />
                 </button>
               </template>
-              {{ themeStore.isDark ? "浅色主题" : "深色主题" }}
+              {{
+                themeStore.mode === "system" ? "随系统"
+                : themeStore.mode === "light" ? "浅色"
+                : "深色"
+              }}
             </n-tooltip>
 
             <n-tooltip placement="right">
