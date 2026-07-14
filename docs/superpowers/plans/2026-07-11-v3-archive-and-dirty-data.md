@@ -6,6 +6,8 @@
 
 **Architecture:** 单表 + `current_location` 4 状态机；状态转移 = DB UPDATE + best-effort 文件移动；`has_physical_file` 由启动扫描线程独占维护；新增 `dirty_data` 表记录孤儿文件；V3 上线一次性清空重建（不兼容迁移）。
 
+> **v6 后续重构**（2026-07-14 提交 `8e4e248`）—— 4 状态机升 5 状态机，加 `permanently_deleted` 最终态；`physically_deleted` 列被折进 `current_location`；v6 迁移（`UPDATE + DROP COLUMN`）。`commands/recycle::permanent_delete` 与 `commands/inbox::ReplaceB` 都改为走 `state_machine::transition_with_dirs(PermanentlyDelete)`。本 plan 文档下方的代码块 / 任务描述仍是 v3 当时的样子，**不**反向同步——把"实际历史"和"当前状态机"分清楚。要看当前状态以 `docs/superpowers/specs/2026-07-11-v3-archive-and-dirty-data.md` 和 `CLAUDE.md` 为准。
+
 **Tech Stack:** Rust（SeaORM + tokio + image crate）+ Vue 3 + Naive UI；新增 image crate 的 webp 编码（已开 default-features=false，需检查 feature flag）。
 
 ---

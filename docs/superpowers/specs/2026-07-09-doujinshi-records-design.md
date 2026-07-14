@@ -3,6 +3,10 @@
 > 日期：2026-07-09
 > 状态：v0.3.1（self-review 后）
 
+> **v3 / v6 后续演进**：
+> - V3（2026-07-11）加了 `archived` 目录 + `dirty_data` 表 + 启动脏数据扫描 + webp 封面，详见 `2026-07-11-v3-archive-and-dirty-data.md`。
+> - v6（2026-07-14 提交 `8e4e248`）把 4 状态机升 5 状态机：`physically_deleted` 列被砍，"已删"语义折进 `current_location='permanently_deleted'`。本 spec 中提到 `physically_deleted` 的章节是当时的设计，**当前实现已不成立**。要查当前状态以 `2026-07-11-v3-archive-and-dirty-data.md` 和 `CLAUDE.md` 为准。
+
 ## 目标
 
 构建一个本地同人志（混杂 18 禁）数据管理工具，覆盖以下核心循环：

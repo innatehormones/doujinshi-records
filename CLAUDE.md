@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 **同人志档案**（doujinshi-records）：本地 Tauri 2 桌面应用，管理个人同人志库。
 
 - 监控 `resources/doujinshi/` 入库新压缩包，BLAKE3 哈希去重 + 提取 ≤100 KB webp 封面。
-- 文件按 4 状态机流转：`inbox → identified / will_delete / archived`，DB 行只增不改（"数据永生"）。
+- 文件按 5 状态机流转：`inbox → identified / will_delete / archived / permanently_deleted`，DB 行只增不改（"数据永生"）。
 - 启动时扫 3 个数据目录，把"DB 无对应行"的孤儿写入 `dirty_data`；把"DB 有行但磁盘丢失"的行打 `has_physical_file=false`，由"脏数据"页提示用户。
 - 暴露本地 HTTP API（`127.0.0.1`，Bearer token 鉴权）供浏览器扩展查询。
 - 仅管理本地文件，**不下载、不分发**内容。
@@ -131,15 +131,23 @@ resources/                # 运行时数据（git 忽略）
 
 `identify_file` 出错时：rar 会通过 `rar-error` 事件把 `RarErrorPayload` 推到前端展示；扫描结束发 `library-updated`（带 processed 数）和 `scanner-status`。
 
-### 4 状态机（state_machine.rs）
+### 5 状态机（state_machine.rs）
 
-`current_location` 字段：`identified` / `will_delete` / `archived`（`inbox` 仅作前台投影）。
+`current_location` 字段：`identified` / `will_delete` / `archived` / `permanently_deleted`（`inbox` 仅作前台投影）。
 
-- 4 个合法转移集中在 `state_machine::transition_with_dirs(conn, id, kind, identified_dir, will_delete_dir, archived_dir)`，4 参版本便于单测。
+- 6 个合法转移集中在 `state_machine::transition_with_dirs(conn, id, kind, identified_dir, will_delete_dir, archived_dir)`：
+  - identified → archived (Archive)
+  - identified → will_delete (MarkForDelete)
+  - will_delete → identified (Restore)
+  - archived → identified (Restore)
+  - will_delete → permanently_deleted (PermanentlyDelete，回收站彻底删除)
+  - identified → permanently_deleted (PermanentlyDelete，冲突 ReplaceB 的 A 行 ghost)
 - 非法转移（如 `archived → will_delete`）返 `Err("illegal transition...")`，HTTP 路由映射成 409。
-- `std::fs::rename` 跨设备时（`CrossesDevices` / Windows `ERROR_NOT_SAME_DEVICE=17`）走 copy + remove 兜底。涉及点：`state_machine::transition_with_dirs` / `identifier::reactivate_row` / `commands::library::move_to_will_delete` / `commands::recycle::restore_from_recycle`。
-- 状态转移后必须 `preview_cache.invalidate(id)`，否则同 id 旧缩略图会被误命中。`move_to_will_delete`（历史命令）没接 state_machine；归档/恢复已统一走 `transition_with_dirs`。
-- `has_physical_file` **只**由 `dirty_scanner` 维护，状态转移不主动更新它。
+- Archive / Restore / MarkForDelete 三种走"源文件不在则拒绝 + 目标位置已有同名则拒绝"两条护栏，DB 不动，HTTP 409。
+- PermanentlyDelete 走另一条逻辑：源文件存在就 best-effort 删、不存在就 no-op（文件不在 = 预期），显式写 `has_physical_file=false`。
+- `std::fs::rename` 跨设备时（`CrossesDevices` / Windows `ERROR_NOT_SAME_DEVICE=17`）走 copy + remove 兜底。涉及点：`state_machine::transition_with_dirs` / `identifier::reactivate_row` / `commands::recycle::restore_from_recycle`。
+- 状态转移后必须 `preview_cache.invalidate(id)`，否则同 id 旧缩略图会被误命中。所有走 state_machine 的转移都已统一（`move_to_will_delete` 也已并入 `mark_for_delete`，单独命令保留给 Tauri 调用方便）。
+- `has_physical_file` 由 `dirty_scanner` 维护 + `permanently_delete` 显式写 false 两条路径维护，archive / restore / mark_for_delete 转移路径不主动更新它。
 
 ### 启动脏数据扫描（dirty_scanner.rs）
 
