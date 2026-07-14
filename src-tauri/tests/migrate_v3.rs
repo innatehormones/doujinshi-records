@@ -83,9 +83,37 @@ async fn v3_physically_deleted_rows_migrate_to_permanently_deleted() {
     let db_path = dir.path().join("data.db");
     let conn = db::connect(&db_path).await.unwrap();
 
-    // 1) 用 v1 + v2..v5 模拟一个 v5 schema 的库
-    migrations::init_schema_versioned(&conn).await.unwrap();
+    // 1) 模拟一个 v5 schema 的库：v1 落表（含 v5 之前的所有列，包括
+    //    physically_deleted），然后 schema_version 标到 5，让后续 runner 只
+    //    跑 v6（v7 不需要 covers_dir）。直接 init_schema_versioned 会把 v6
+    //    + v7 也跑掉，physically_deleted 列就被砍了，下面 INSERT 没法
+    //    模拟 v5 库的场景。
+    migrations::init_schema(&conn).await.unwrap();
     let backend = conn.get_database_backend();
+    conn.execute(Statement::from_string(
+        backend.clone(),
+        "CREATE TABLE IF NOT EXISTS schema_version (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL)".to_string(),
+    ))
+    .await
+    .unwrap();
+    // v4 才会加 has_physical_file —— 直接 ALTER 补上，让 INSERT 语法保持 v5 形态。
+    conn.execute(Statement::from_string(
+        backend.clone(),
+        "ALTER TABLE doujinshi_file ADD COLUMN has_physical_file INTEGER NOT NULL DEFAULT 1".to_string(),
+    ))
+    .await
+    .unwrap();
+    for i in 1..=5 {
+        conn.execute(Statement::from_string(
+            backend.clone(),
+            format!(
+                "INSERT INTO schema_version(version, applied_at) VALUES ({}, '2026-01-01T00:00:00Z')",
+                i
+            ),
+        ))
+        .await
+        .unwrap();
+    }
 
     // 2) 直接 SQL 塞两行：一行 physically_deleted=0（普通行）、一行
     //    physically_deleted=1（升 v6 前是"已物理删除"语义）。

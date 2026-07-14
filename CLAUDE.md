@@ -63,7 +63,7 @@ src-tauri/src/
 ├── config.rs            # AppConfig + 资源目录派生方法
 ├── error.rs             # AppError（Io/Db/NotFound/ConflictPending/Other/Anyhow）
 ├── db/
-│   ├── migrations.rs    # MIGRATIONS 数组 + init_schema_versioned，CURRENT_VERSION=5
+│   ├── migrations.rs    # MIGRATIONS 数组 + init_schema_versioned_with_covers_dir，CURRENT_VERSION=7
 │   ├── recovery.rs      # 启动时按 SQLite magic 头检测 corruption，备份后重建
 │   └── entities/        # SeaORM 实体（doujinshi_file / conflict / scan_event / app_setting / ...）
 ├── services/

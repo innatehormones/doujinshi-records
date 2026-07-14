@@ -279,7 +279,7 @@ async fn extract_cover(
     let Some(data) = picked else {
         return Ok(None);
     };
-    let out = covers_dir.join(format!("{}.jpg", hash));
+    let out = covers_dir.join(format!("{}.pwb", hash));
     let written = crate::services::cover::extract_and_save(&data, &out).await?;
     Ok(Some(format!(
         "covers/{}",

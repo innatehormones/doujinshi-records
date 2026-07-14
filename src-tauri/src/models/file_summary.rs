@@ -99,7 +99,7 @@ mod tests {
             version_tag: None,
             current_path: "p".into(),
             current_location: "permanently_deleted".into(),
-            cover_path: Some("covers/h.webp".into()),
+            cover_path: Some("covers/h.pwb".into()),
             marked_for_delete: false,
             has_physical_file: false,
             viewed: false,

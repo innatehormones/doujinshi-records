@@ -20,9 +20,12 @@ async fn main() {
     let conn = doujinshi_records::db::connect(&cfg.db_path())
         .await
         .expect("failed to connect db");
-    doujinshi_records::db::migrations::init_schema_versioned(&conn)
-        .await
-        .expect("failed to init schema");
+    doujinshi_records::db::migrations::init_schema_versioned_with_covers_dir(
+        &conn,
+        Some(&cfg.covers_dir()),
+    )
+    .await
+    .expect("failed to init schema");
 
     println!("resources dir: {}", cfg.resources_dir.display());
     println!("db: {}", cfg.db_path().display());

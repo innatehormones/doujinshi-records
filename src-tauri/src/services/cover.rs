@@ -67,7 +67,7 @@ mod tests {
     #[tokio::test]
     async fn compresses_to_webp_within_size_budget() {
         let dir = TempDir::new().unwrap();
-        let out_path = dir.path().join("cover.webp");
+        let out_path = dir.path().join("cover.pwb");
         let raw = make_test_png_bytes();
         let written = extract_and_save(&raw, &out_path).await.unwrap();
         assert_eq!(written, out_path);
