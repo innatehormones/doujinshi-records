@@ -250,6 +250,7 @@ function locationLabel(): string {
                 decoding="async"
                 @load="pipeline.markLoaded(idx)"
               />
+              <div class="px-badge">P{{ idx + 1 }}</div>
             </div>
           </div>
         </n-card>
@@ -398,6 +399,23 @@ function locationLabel(): string {
   transition: opacity 0.18s ease-out;
 }
 .thumb-img-loaded { opacity: 1; }
+/* 缩略图右下角页码角标：固定白字半透黑底。
+   同人志图多为黑白漫画，白底为主，黑色只占线条/阴影，黑底白字在
+   任意区域都能读。彩色图也适用。 */
+.px-badge {
+  position: absolute;
+  right: 6px;
+  bottom: 6px;
+  padding: 2px 6px;
+  border-radius: 4px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.05em;
+  pointer-events: none;
+  background: rgba(0, 0, 0, 0.55);
+  color: #fff;
+  backdrop-filter: blur(2px);
+}
 .thumb-skeleton {
   position: absolute;
   inset: 0;
