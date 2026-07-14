@@ -103,7 +103,7 @@ function fmtSize(bytes: number): string {
 
         <div
           v-else
-          class="mt-4 grid grid-cols-3 gap-5 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 2xl:grid-cols-8"
+          class="mt-4 grid grid-cols-4 gap-5 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 3xl:grid-cols-8"
         >
           <article
             v-for="f in store.present"

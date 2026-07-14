@@ -167,7 +167,7 @@ async function onCardPermanentDelete(id: number) {
         v-if="!store.loading && store.items.length === 0"
         description="还没有文件，把压缩包丢进 resources/doujinshi/ 即可。"
       />
-      <div v-else class="grid grid-cols-3 gap-5 sm:grid-cols-4 md:grid-cols-5 lg:grid-cols-6 xl:grid-cols-7 2xl:grid-cols-8">
+      <div v-else class="grid grid-cols-4 gap-5 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 3xl:grid-cols-8">
         <file-card
           v-for="f in store.items"
           :key="f.id"
