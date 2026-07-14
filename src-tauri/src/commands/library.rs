@@ -140,38 +140,12 @@ async fn state_machine_transition(
 #[tauri::command]
 pub async fn move_to_will_delete(state: State<'_, AppState>, id: i64) -> AppResult<()> {
     crate::commands::guards::ensure_no_open_conflict(&state.conn, id).await?;
-    use sea_orm::EntityTrait;
-    let row = doujinshi_file::Entity::find_by_id(id)
-        .one(&state.conn)
-        .await?
-        .ok_or_else(|| AppError::Other(format!("file {} not found", id)))?;
-    let src = std::path::PathBuf::from(&row.current_path);
-    let dst_dir = state.config.will_delete_dir();
-    std::fs::create_dir_all(&dst_dir)?;
-    let dst = dst_dir.join(src.file_name().unwrap_or_default());
-    if src.exists() {
-        // std::fs::rename fails with CrossesDevices when src and dst are
-        // on different volumes (e.g. inbox on D:, library on E:). Fall
-        // back to copy + remove to keep the delete flow working in that
-        // case - the spec calls this out under "Known Build-Time Risks".
-        if let Err(e) = std::fs::rename(&src, &dst) {
-            if matches!(e.kind(), std::io::ErrorKind::CrossesDevices)
-                || e.raw_os_error() == Some(17) // ERROR_NOT_SAME_DEVICE on Windows
-            {
-                std::fs::copy(&src, &dst)?;
-                std::fs::remove_file(&src)?;
-            } else {
-                return Err(e.into());
-            }
-        }
-    }
-    let mut am: doujinshi_file::ActiveModel = row.into();
-    am.current_path = Set(dst.to_string_lossy().into_owned());
-    am.current_location = Set("will_delete".into());
-    am.marked_for_delete = Set(false);
-    am.updated_at = Set(chrono::Utc::now());
-    am.update(&state.conn).await?;
-    Ok(())
+    state_machine_transition(
+        &state,
+        id,
+        crate::services::state_machine::TransitionKind::MarkForDelete,
+    )
+    .await
 }
 
 /// Partial-update body for `update_metadata`. Fields set to `Some(_)`

@@ -38,6 +38,8 @@ archived → identified    (从归档取回)
 非法转移由后端拒绝（如 `archived → will_delete`）。
 
 > **文件缺失时的行为（用户主动转移）**：源文件不在盘上时转移**直接失败返 Err**，绝不静默改 `current_location`。`physically_deleted` 列仍由 `dirty_scanner` 启动扫描维护，不由转移路径写。这条规则专管用户主动点按钮的转移（archive / restore / mark_for_delete），后台自动流程（scanner / dirty_scanner）的 best-effort 行为见 §启动脏数据扫描。
+>
+> **目标位置已有同名文件**：同样直接失败返 Err。典型场景是用户把文件手动塞进 will_delete / archived 目录后，再点"取回" / "归档"。不动 DB、不动盘上任何一份（不覆盖、不删）；用户自己处理（删多出来的 / 改名）后再点。和 `inbox` 入库撞名走的 `conflict` 表不是一回事——状态转移不在那张表上挂记录，V3 范围内就是单步拒绝，V3.1+ 再议。
 
 ### 数据永生
 
@@ -98,7 +100,7 @@ CREATE TABLE IF NOT EXISTS dirty_data (
 
 | 用户操作 | DB 更新 | 文件操作 | 失败行为 |
 |---|---|---|---|
-| 归档（identified → archived） | 成功时 `UPDATE current_location='archived'` + `physically_deleted=false` | `rename(src→archived_dir/)` | src 不在盘上 → 返 Err，DB 不动；HTTP 409 + 可读 body；前端 toast 报错 |
+| 归档（identified → archived） | 成功时 `UPDATE current_location='archived'` + `physically_deleted=false` | `rename(src→archived_dir/)` | src 不在盘上 / 目标位置已有同名 → 返 Err，DB 不动；HTTP 409 + 可读 body；前端 toast 报错 |
 | 删除（identified → will_delete） | 同上结构 | 同上 | 同上 |
 | 取回（will_delete/archived → identified） | 同上结构 | `rename(src→identified_dir/)` | 同上 |
 
@@ -270,6 +272,7 @@ resources/data.db                   ← 删表重建
 - `cover::extract_and_save` 输出 webp（断言文件 magic bytes = `RIFF....WEBP`）
 - `cover::extract_and_save` 输出大小 ≤ 100KB
 - `identifier` 状态转移：合法转移成功、非法转移失败、文件缺失时 DB 转移仍然成功
+- `state_machine` 转移护栏：源文件缺失 → DB 不动；目标位置已有同名 → DB 不动、盘上两份文件都不动
 
 ### 集成测试
 

@@ -106,6 +106,16 @@ pub async fn transition_with_dirs(
         ));
     }
     std::fs::create_dir_all(target_dir)?;
+    if dest.exists() {
+        // 目标位置已有同名文件：拒绝执行，让用户自己清理（删多出来的 / 改名），
+        // 之后再试。跟 inbox 入库的 `conflict` 表不是一回事，那个走流程；这里
+        // 只是单步拒绝，避免静默覆盖或制造"两个 DB 行指向同一盘上文件"的脏态。
+        return Err(anyhow!(
+            "file {} target already exists at {}",
+            id,
+            dest.display()
+        ));
+    }
     if let Err(e) = std::fs::rename(&src, &dest) {
         if matches!(e.kind(), std::io::ErrorKind::CrossesDevices)
             || e.raw_os_error() == Some(17)
@@ -234,6 +244,46 @@ mod tests {
             .unwrap();
         assert_eq!(row.current_location, "archived");
         assert!(!row.physically_deleted);
+    }
+
+    #[tokio::test]
+    async fn transition_fails_when_target_exists() {
+        let (_dir, identified, will_delete, archived) = setup_dirs().await;
+        let conn = open_db(_dir.path()).await;
+
+        let src = identified.join("f.zip");
+        std::fs::write(&src, b"data").unwrap();
+        let id = seed_row(&conn, "identified", &src.to_string_lossy()).await;
+
+        // 提前在 will_delete 放同名文件，模拟用户手动塞进去的冲突。
+        std::fs::write(will_delete.join("f.zip"), b"preexisting").unwrap();
+
+        let err = transition_with_dirs(
+            &conn,
+            id,
+            TransitionKind::MarkForDelete,
+            &identified,
+            &will_delete,
+            &archived,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("target already exists"),
+            "err: {}",
+            err
+        );
+
+        // 转移失败：DB 不动，src 应保留不动，预放文件也应原样存在。
+        let row = doujinshi_file::Entity::find_by_id(id)
+            .one(&conn)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.current_location, "identified");
+        assert!(src.exists(), "src 应保留");
+        let dst_content = std::fs::read(will_delete.join("f.zip")).unwrap();
+        assert_eq!(dst_content, b"preexisting", "预放文件不应被覆盖");
     }
 
     #[tokio::test]
