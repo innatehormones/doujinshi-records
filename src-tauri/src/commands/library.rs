@@ -100,11 +100,6 @@ pub async fn mark_for_delete(state: State<'_, AppState>, id: i64) -> AppResult<(
 }
 
 #[tauri::command]
-pub async fn unmark_for_delete(state: State<'_, AppState>, id: i64) -> AppResult<()> {
-    state_machine_transition(&state, id, crate::services::state_machine::TransitionKind::Restore).await
-}
-
-#[tauri::command]
 pub async fn archive(state: State<'_, AppState>, id: i64) -> AppResult<()> {
     crate::commands::guards::ensure_no_open_conflict(&state.conn, id).await?;
     state_machine_transition(&state, id, crate::services::state_machine::TransitionKind::Archive).await
@@ -132,17 +127,6 @@ async fn state_machine_transition(
     // zip 移动/删除后清掉对应 id 的预览缓存（key 是 (id, idx)，状态变了内容不再有意义）。
     state.preview_cache.invalidate(id);
     Ok(())
-}
-
-#[tauri::command]
-pub async fn move_to_will_delete(state: State<'_, AppState>, id: i64) -> AppResult<()> {
-    crate::commands::guards::ensure_no_open_conflict(&state.conn, id).await?;
-    state_machine_transition(
-        &state,
-        id,
-        crate::services::state_machine::TransitionKind::MarkForDelete,
-    )
-    .await
 }
 
 /// Partial-update body for `update_metadata`. Fields set to `Some(_)`

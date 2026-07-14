@@ -146,7 +146,7 @@ resources/                # 运行时数据（git 忽略）
 - Archive / Restore / MarkForDelete 三种走"源文件不在则拒绝 + 目标位置已有同名则拒绝"两条护栏，DB 不动，HTTP 409。
 - PermanentlyDelete 走另一条逻辑：源文件存在就 best-effort 删、不存在就 no-op（文件不在 = 预期），显式写 `has_physical_file=false`。
 - `std::fs::rename` 跨设备时（`CrossesDevices` / Windows `ERROR_NOT_SAME_DEVICE=17`）走 copy + remove 兜底。涉及点：`state_machine::transition_with_dirs` / `identifier::reactivate_row` / `commands::recycle::restore_from_recycle`。
-- 状态转移后必须 `preview_cache.invalidate(id)`，否则同 id 旧缩略图会被误命中。所有走 state_machine 的转移都已统一（`move_to_will_delete` 也已并入 `mark_for_delete`，单独命令保留给 Tauri 调用方便）。
+- 状态转移后必须 `preview_cache.invalidate(id)`，否则同 id 旧缩略图会被误命中。所有走 state_machine 的转移都已统一（`unmark_for_delete` / `move_to_will_delete` 旧命令已删，统一走 `restore` / `mark_for_delete`）。
 - `has_physical_file` 由 `dirty_scanner` 维护 + `permanently_delete` 显式写 false 两条路径维护，archive / restore / mark_for_delete 转移路径不主动更新它。
 
 ### 启动脏数据扫描（dirty_scanner.rs）

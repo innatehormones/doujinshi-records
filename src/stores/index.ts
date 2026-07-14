@@ -175,16 +175,6 @@ export const useLibraryStore = defineStore("library", () => {
     await load()
   }
 
-  async function unmarkForDelete(id: number) {
-    await api.unmarkForDelete(id)
-    await load()
-  }
-
-  async function confirmMoveToWillDelete(id: number) {
-    await api.moveToWillDelete(id)
-    items.value = items.value.filter((f) => f.id !== id)
-  }
-
   async function fetchDetailImagesFor(id: number): Promise<DetailImagesResponse> {
     return fetchDetailImages(id)
   }
@@ -206,7 +196,7 @@ export const useLibraryStore = defineStore("library", () => {
     items, total, page, totalPages, showPager, query, locationFilter, loading,
     topCircles,
     load, gotoPage,
-    archive, restore, markForDelete, unmarkForDelete, confirmMoveToWillDelete,
+    archive, restore, markForDelete,
     fetchDetailImagesFor, updateMetadataFor,
     setQuery, getQuery,
   }

@@ -22,8 +22,6 @@ export const api = {
     invoke<CircleCount[]>("top_circles", { limit }),
   getById: (id: number) => invoke<FileSummary>("get_by_id", { id }),
   markForDelete: (id: number) => invoke<void>("mark_for_delete", { id }),
-  unmarkForDelete: (id: number) => invoke<void>("unmark_for_delete", { id }),
-  moveToWillDelete: (id: number) => invoke<void>("move_to_will_delete", { id }),
   archive: (id: number) => invoke<void>("archive", { id }),
   restore: (id: number) => invoke<void>("restore", { id }),
   listRecycle: (

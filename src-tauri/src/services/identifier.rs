@@ -84,15 +84,8 @@ impl IdentifierError {
     }
 }
 
-/// RAR size tiering thresholds. Files <= SMALL extract directly;
-/// files in (SMALL, MEDIUM] require frontend confirmation; files
-/// > MEDIUM are refused outright.
-///
-/// `RAR_SMALL_BYTES` is documented for the frontend's confirmation
-/// logic — it is the boundary at which the user has to click
-/// "still extract" before the backend will proceed.
-#[allow(dead_code)]
-const RAR_SMALL_BYTES: u64 = 200 * 1024 * 1024; // 200 MB
+/// RAR size gate: >1 GB 直接拒（用户在前端确认"仍要解压"后由 `force_extract`
+/// 跳过这条护栏，参照 `force_extract` 命令）。
 const RAR_MEDIUM_BYTES: u64 = 1024 * 1024 * 1024; // 1 GB
 
 pub async fn identify_file(
