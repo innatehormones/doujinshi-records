@@ -37,7 +37,7 @@ archived → identified    (从归档取回)
 
 非法转移由后端拒绝（如 `archived → will_delete`）。
 
-> **文件缺失时的行为**：所有合法转移在文件不存在时 DB 转移仍成功（`current_location` 更新 + `physically_deleted=true` 自动设），文件移动 no-op。`has_physical_file` 不在转移路径里写。
+> **文件缺失时的行为（用户主动转移）**：源文件不在盘上时转移**直接失败返 Err**，绝不静默改 `current_location`。`physically_deleted` 列仍由 `dirty_scanner` 启动扫描维护，不由转移路径写。这条规则专管用户主动点按钮的转移（archive / restore / mark_for_delete），后台自动流程（scanner / dirty_scanner）的 best-effort 行为见 §启动脏数据扫描。
 
 ### 数据永生
 
@@ -96,13 +96,13 @@ CREATE TABLE IF NOT EXISTS dirty_data (
 
 ## 状态转移 + 文件缺失语义
 
-| 用户操作 | DB 更新（必然） | 文件操作（best-effort） |
-|---|---|---|
-| 归档（identified → archived） | `UPDATE current_location='archived'` | `rename(src→archived_dir/)`；src 不存在 → no-op，自动 `physically_deleted=true` |
-| 删除（identified → will_delete） | `UPDATE current_location='will_delete'` | 同上 |
-| 取回（will_delete/archived → identified） | `UPDATE current_location='identified'` | `rename(src→identified_dir/)`；src 不存在 → 保持 `physically_deleted=true` |
+| 用户操作 | DB 更新 | 文件操作 | 失败行为 |
+|---|---|---|---|
+| 归档（identified → archived） | 成功时 `UPDATE current_location='archived'` + `physically_deleted=false` | `rename(src→archived_dir/)` | src 不在盘上 → 返 Err，DB 不动；HTTP 409 + 可读 body；前端 toast 报错 |
+| 删除（identified → will_delete） | 同上结构 | 同上 | 同上 |
+| 取回（will_delete/archived → identified） | 同上结构 | `rename(src→identified_dir/)` | 同上 |
 
-`has_physical_file` 不在状态转移路径里写——**只有启动扫描线程**更新它。
+`has_physical_file` 不在状态转移路径里写——**只有启动扫描线程**更新它。`physically_deleted` 仅在转移**成功**时写 `false`；失败 / 缺失时不写。
 
 ### 行复活
 
@@ -285,6 +285,7 @@ resources/data.db                   ← 删表重建
 - LibraryView 点"删除" → 验证文件移到 will_delete/ + 行 current_location=will_delete
 - 回收站点"取回" → 验证文件移回 identified/
 - 把归档目录文件手动拿走 → 重启 → 验证 has_physical_file=false + dirty 页无新行（因为 DB 行匹配 current_path，孤儿检测不报）
+- 归档 → 在资源管理器删 archived 目录的文件 → **不重启直接点"取回"** → 验证：前端 toast 报"文件已丢失"类错误，DB 行 current_location 仍为 `archived`，未被静默改写为 `identified`
 - 拖同 hash 文件重新入库 → 验证行复用（filename 更新、physically_deleted=false）
 
 ## 风险
@@ -292,7 +293,7 @@ resources/data.db                   ← 删表重建
 - **状态转移并发**：扫描线程更新 `has_physical_file` 时，如果用户正在转移状态，可能短暂不一致。V3 单用户本地应用，可忽略。
 - **archive 命令失败**：rename 跨设备（V2 已知问题）→ copy + remove fallback。
 - **`dirty_data` 表膨胀**：仅在脏数据出现时增长，预期很慢；不提供清理入口（V3.1 加）。
-- **`physically_deleted` 语义扩展**：从"清空回收站"扩展为"文件不存在"，需要更新代码注释 + 测试断言。
+- **`physically_deleted` 语义扩展**：从"清空回收站"扩展为"文件不存在"（仅由 `dirty_scanner` 维护），转移路径不再写它。
 
 ## 待澄清（V3 落地前）
 

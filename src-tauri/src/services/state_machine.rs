@@ -1,12 +1,20 @@
 //! 4 状态机的转移核心。
 //!
-//! 规则：DB UPDATE + best-effort 文件移动；src 不存在时 no-op + physically_deleted=true。
+//! 规则：DB UPDATE + 文件移动是一笔交易，必须都成功；src 不存在直接返 Err
+//! 拒绝（前端 catch 后报"文件已丢失，无法 [动作]"），绝不静默更新 `current_location`
+//! 制造 `current_location=X + physically_deleted=true` 的矛盾态。
+//!
 //! 4 个合法转移：
 //!   - identified → archived (Archive)
 //!   - identified → will_delete (MarkForDelete)
 //!   - will_delete → identified (Restore)
 //!   - archived → identified (Restore)
 //! 其他转移非法，调用方应先检查状态。
+//!
+//! 历史 spec 写"src 不存在时 no-op + physically_deleted=true"是 best-effort，
+//! 适用于后台扫描（scanner/dirty_scanner）但不应套用到用户主动点按钮的转移
+//! ——那等于撒谎说"操作成功"。本模块专门负责用户主动转移，src 缺失一律报错；
+//! 启动扫描仍由 `dirty_scanner` 维护 `has_physical_file`。
 
 use anyhow::{anyhow, Result};
 use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
@@ -88,22 +96,27 @@ pub async fn transition_with_dirs(
 
     let mut am: doujinshi_file::ActiveModel = row.into();
 
-    if src.exists() {
-        std::fs::create_dir_all(target_dir)?;
-        if let Err(e) = std::fs::rename(&src, &dest) {
-            if matches!(e.kind(), std::io::ErrorKind::CrossesDevices)
-                || e.raw_os_error() == Some(17)
-            {
-                std::fs::copy(&src, &dest)?;
-                std::fs::remove_file(&src)?;
-            } else {
-                return Err(e.into());
-            }
-        }
-        am.physically_deleted = Set(false);
-    } else {
-        am.physically_deleted = Set(true);
+    if !src.exists() {
+        // 源文件不在盘上：拒绝转移，绝不静默改 DB。
+        // `physically_deleted` 由 `dirty_scanner` 启动扫描维护，不由转移路径写。
+        return Err(anyhow!(
+            "file {} physical file missing (expected at {})",
+            id,
+            src.display()
+        ));
     }
+    std::fs::create_dir_all(target_dir)?;
+    if let Err(e) = std::fs::rename(&src, &dest) {
+        if matches!(e.kind(), std::io::ErrorKind::CrossesDevices)
+            || e.raw_os_error() == Some(17)
+        {
+            std::fs::copy(&src, &dest)?;
+            std::fs::remove_file(&src)?;
+        } else {
+            return Err(e.into());
+        }
+    }
+    am.physically_deleted = Set(false);
 
     am.current_location = Set(target.into());
     am.current_path = Set(dest.to_string_lossy().into_owned());
@@ -157,22 +170,38 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn transition_updates_location_only_when_no_file() {
+    async fn transition_fails_when_source_file_missing() {
         let (_dir, identified, will_delete, archived) = setup_dirs().await;
         let conn = open_db(_dir.path()).await;
         let id = seed_row(&conn, "identified", "missing/f.zip").await;
 
-        transition_with_dirs(&conn, id, TransitionKind::Archive, &identified, &will_delete, &archived)
-            .await
-            .unwrap();
+        let err = transition_with_dirs(
+            &conn,
+            id,
+            TransitionKind::Archive,
+            &identified,
+            &will_delete,
+            &archived,
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("physical file missing"),
+            "err: {}",
+            err
+        );
 
+        // 转移失败：DB 不动，current_location 仍为 identified，physically_deleted 不写。
         let row = doujinshi_file::Entity::find_by_id(id)
             .one(&conn)
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(row.current_location, "archived");
-        assert!(row.physically_deleted, "src 不存在 → physically_deleted=true");
+        assert_eq!(row.current_location, "identified");
+        assert!(
+            !row.physically_deleted,
+            "missing 时不应写 physically_deleted"
+        );
     }
 
     #[tokio::test]

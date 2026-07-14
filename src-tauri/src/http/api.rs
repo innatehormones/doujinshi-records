@@ -600,7 +600,9 @@ fn state_transition_response(r: anyhow::Result<()>) -> axum::response::Response 
             let msg = e.to_string();
             if msg.contains("not found") {
                 StatusCode::NOT_FOUND.into_response()
-            } else if msg.contains("illegal") {
+            } else if msg.contains("illegal") || msg.contains("physical file missing") {
+                // 状态非法（转移不合法）或文件不在盘上：都是"目标资源存在但当前
+                // 状态不允许这次操作"，用 409 + 可读 body 让前端 toast 显示给用户。
                 (StatusCode::CONFLICT, msg).into_response()
             } else {
                 (StatusCode::INTERNAL_SERVER_ERROR, msg).into_response()
