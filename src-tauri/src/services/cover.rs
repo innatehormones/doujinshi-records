@@ -56,7 +56,9 @@ fn resize_to_max(img: image::DynamicImage, max: u32) -> image::DynamicImage {
         let ratio = max as f32 / m as f32;
         let nw = ((w as f32) * ratio) as u32;
         let nh = ((h as f32) * ratio) as u32;
-        img.resize(nw, nh, image::imageops::FilterType::Lanczos3)
+        // Triangle（双线性）足够用于 600px 缩略图；Lanczos3 是单核
+        // 纯 Rust 无 SIMD，5000x7000 → 600 需要 ~2.7s，Triangle < 300ms。
+        img.resize(nw, nh, image::imageops::FilterType::Triangle)
     }
 }
 
