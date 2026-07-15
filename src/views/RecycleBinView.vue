@@ -108,7 +108,7 @@ function fmtSize(bytes: number): string {
           <article
             v-for="f in store.present"
             :key="f.id"
-            v-memo="[f.id, f.has_physical_file]"
+            v-memo="[f.id, f.file_state]"
             class="relative flex flex-col overflow-hidden rounded-cards border border-border bg-card transition-[border-color,transform] duration-150 hover:border-slate"
             @click="onCardOpen(f.id)"
           >

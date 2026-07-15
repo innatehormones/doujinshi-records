@@ -194,14 +194,28 @@ async function moveToWillDelete() {
   }
 }
 
-function locationLabel(): string {
+function statusLabel(): string {
   if (!file.value) return ""
-  switch (file.value.current_location) {
-    case "will_delete": return "回收站"
+  switch (file.value.status) {
+    case "recycle": return "回收站"
     case "archived": return "归档"
-    case "inbox": return "待入库"
+    case "deleted": return "已删"
     default: return "已入库"
   }
+}
+
+function statusTagType(): "default" | "primary" | "info" | "success" | "warning" | "error" {
+  if (!file.value) return "default"
+  switch (file.value.status) {
+    case "in_library": return "success"
+    case "archived": return "info"
+    case "recycle": return "warning"
+    case "deleted": return "error"
+  }
+}
+
+function fileStateTitle(s: string): string {
+  return s === "missing" ? "文件已丢失" : s === "absent_confirmed" ? "文件已销毁" : ""
 }
 </script>
 
@@ -227,6 +241,19 @@ function locationLabel(): string {
             title="压缩包已不在磁盘"
             class="mb-3"
           />
+          <n-alert
+            v-else-if="file.file_state !== 'present'"
+            :type="file.file_state === 'absent_confirmed' ? 'error' : 'warning'"
+            :title="fileStateTitle(file.file_state)"
+            class="mb-3"
+          >
+            <template v-if="file.file_state === 'missing'">
+              文件已不在预期路径。预览不可用；元数据可正常查看和修改。
+            </template>
+            <template v-else-if="file.file_state === 'absent_confirmed'">
+              文件已被销毁。记录仍保留，可在 Library 恢复为入库态。
+            </template>
+          </n-alert>
           <n-empty
             v-else-if="images.length === 0"
             description="zip 内无图片"
@@ -279,21 +306,24 @@ function locationLabel(): string {
             <div class="file-meta mono">
               <div>id: {{ file.id }}</div>
               <div>hash: {{ file.hash.slice(0, 16) }}…</div>
-              <div>location: {{ file.current_location }}</div>
+              <div>status: {{ file.status }}</div>
+              <div>file_state: {{ file.file_state }}</div>
             </div>
             <div class="status-block">
               <span class="status-label">状态</span>
               <div class="status-row">
-                <n-tag :type="file.current_location === 'will_delete' ? 'warning' : (file.current_location === 'archived' ? 'info' : 'default')">
-                  {{ locationLabel() }}
+                <n-tag :type="statusTagType()">
+                  {{ statusLabel() }}
                 </n-tag>
-                <n-tag v-if="!file.has_physical_file" type="error">文件丢失</n-tag>
+                <n-tag v-if="file.file_state !== 'present'" type="error">
+                  {{ fileStateTitle(file.file_state) }}
+                </n-tag>
               </div>
             </div>
             <div class="action-divider" />
             <n-space>
               <n-button
-                v-if="file.current_location === 'identified'"
+                v-if="file.status === 'in_library'"
                 type="primary"
                 ghost
                 @click="archive"
@@ -304,7 +334,7 @@ function locationLabel(): string {
                 归档
               </n-button>
               <n-button
-                v-if="file.current_location === 'identified'"
+                v-if="file.status === 'in_library'"
                 type="warning"
                 ghost
                 @click="moveToWillDelete"
@@ -315,7 +345,7 @@ function locationLabel(): string {
                 移到回收站
               </n-button>
               <n-button
-                v-if="file.current_location === 'will_delete' || file.current_location === 'archived'"
+                v-if="file.status === 'recycle' || file.status === 'archived' || file.status === 'deleted'"
                 type="primary"
                 ghost
                 @click="restore"
@@ -323,7 +353,7 @@ function locationLabel(): string {
                 <template #icon>
                   <RotateCcw :size="14" :stroke-width="1.8" />
                 </template>
-                取回到已入库
+                {{ file.status === 'deleted' ? '恢复为入库' : '取回到已入库' }}
               </n-button>
             </n-space>
           </n-space>
