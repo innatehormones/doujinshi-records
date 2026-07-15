@@ -24,11 +24,15 @@ function clearQuery() {
   store.page = 1
 }
 
-const locationOptions = [
-  { label: "已入库", value: "identified" },
+/// V4 业务 status 过滤下拉选项。`active` 是 UI 概念（=排除 recycle +
+/// deleted），由 store 内部的 `visibleItems` 二次过滤。
+const statusFilterOptions = [
+  { label: "正常（排除回收/已删）", value: "active" },
+  { label: "全部", value: "all" },
+  { label: "入库", value: "in_library" },
   { label: "归档", value: "archived" },
-  { label: "回收站", value: "will_delete" },
-  { label: "已删除", value: "permanently_deleted" },
+  { label: "回收站", value: "recycle" },
+  { label: "已删除", value: "deleted" },
 ]
 
 const apiBase = computed(() => settings.apiBase)
@@ -59,7 +63,7 @@ watch(() => store.query, () => {
   store.page = 1
   store.load()
 })
-watch(() => store.locationFilter, () => {
+watch(() => store.statusFilter, () => {
   store.page = 1
   store.load()
 })
@@ -116,13 +120,11 @@ async function onCardPermanentDelete(id: number) {
           style="width: 240px; flex: 0 0 240px;"
         />
         <n-select
-          :value="store.locationFilter"
-          @update:value="(v) => (store.locationFilter = v)"
-          :options="locationOptions"
-          placeholder="全部"
-          clearable
+          :value="store.statusFilter"
+          @update:value="(v) => (store.statusFilter = v)"
+          :options="statusFilterOptions"
           size="medium"
-          style="width: 140px; flex: 0 0 140px;"
+          style="width: 200px; flex: 0 0 200px;"
         />
       </div>
     </header>
@@ -164,14 +166,14 @@ async function onCardPermanentDelete(id: number) {
 
     <n-spin :show="store.loading">
       <n-empty
-        v-if="!store.loading && store.items.length === 0"
+        v-if="!store.loading && store.visibleItems.length === 0"
         description="还没有文件，把压缩包丢进 resources/doujinshi/ 即可。"
       />
       <div v-else class="grid grid-cols-4 gap-5 lg:grid-cols-5 xl:grid-cols-6 2xl:grid-cols-7 3xl:grid-cols-8">
         <file-card
-          v-for="f in store.items"
+          v-for="f in store.visibleItems"
           :key="f.id"
-          v-memo="[f.id, f.current_location, f.has_physical_file]"
+          v-memo="[f.id, f.status, f.file_state]"
           :file="f"
           :api-base="apiBase"
           @open="onCardOpen"

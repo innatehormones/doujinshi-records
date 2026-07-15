@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { NPopconfirm } from "naive-ui"
-import { Archive, Trash2, RotateCcw, X, AlertCircle, Inbox } from "@lucide/vue"
+import { NPopconfirm, NTag } from "naive-ui"
+import { Archive, Trash2, RotateCcw, X, AlertCircle } from "@lucide/vue"
 import type { FileSummary } from '@/types/api'
 
 const props = defineProps<{
@@ -27,6 +27,27 @@ function formatSize(bytes: number): string {
   return (bytes / 1024 / 1024).toFixed(1) + " MB"
 }
 
+/// V4 业务 status → 中文标签 / Naive UI tag 颜色。
+const STATUS_LABEL: Record<string, string> = {
+  in_library: "入库",
+  archived: "归档",
+  recycle: "回收",
+  deleted: "已删",
+}
+type TagType = "default" | "primary" | "info" | "success" | "warning" | "error"
+const STATUS_TAG_TYPE: Record<string, TagType> = {
+  in_library: "success",
+  archived: "info",
+  recycle: "warning",
+  deleted: "error",
+}
+function statusLabel(s: string): string {
+  return STATUS_LABEL[s] ?? s
+}
+function statusTagType(s: string): TagType {
+  return STATUS_TAG_TYPE[s] ?? "default"
+}
+
 </script>
 
 <template>
@@ -44,36 +65,47 @@ function formatSize(bytes: number): string {
       </div>
       <div class="absolute top-2 left-2 flex gap-1">
         <span
-          v-if="file.current_location === 'will_delete'"
+          v-if="file.status === 'recycle'"
           class="inline-flex size-5 items-center justify-center rounded-full border border-current bg-obsidian/85 text-ember-orange backdrop-blur-sm"
           title="回收"
         >
           <Trash2 :size="12" :stroke-width="1.8" />
         </span>
         <span
-          v-if="file.current_location === 'archived'"
+          v-if="file.status === 'archived'"
           class="inline-flex size-5 items-center justify-center rounded-full border border-current bg-obsidian/85 text-archive-blue backdrop-blur-sm"
           title="归档"
         >
           <Archive :size="12" :stroke-width="1.8" />
         </span>
         <span
-          v-if="file.current_location === 'inbox'"
-          class="inline-flex size-5 items-center justify-center rounded-full border border-current bg-obsidian/85 text-snow backdrop-blur-sm"
-          title="待入库"
+          v-if="file.status === 'deleted'"
+          class="inline-flex size-5 items-center justify-center rounded-full border border-current bg-obsidian/85 text-ember-red backdrop-blur-sm"
+          title="已删"
         >
-          <Inbox :size="12" :stroke-width="1.8" />
+          <X :size="12" :stroke-width="1.8" />
         </span>
         <span
-          v-if="!file.has_physical_file"
+          v-if="file.file_state !== 'present'"
           class="inline-flex size-5 items-center justify-center rounded-full border border-current bg-obsidian/85 text-ember-red backdrop-blur-sm"
-          title="文件丢失"
+          :title="file.file_state === 'absent_confirmed' ? '用户已确认删除' : '文件丢失'"
         >
           <AlertCircle :size="12" :stroke-width="1.8" />
         </span>
       </div>
     </div>
     <div class="flex flex-col gap-2 p-4">
+      <div class="flex items-center gap-1.5">
+        <n-tag size="small" :type="statusTagType(file.status)">
+          {{ statusLabel(file.status) }}
+        </n-tag>
+        <span
+          v-if="file.file_state !== 'present'"
+          class="font-mono text-caption text-ember-red tracking-[0.05em]"
+        >
+          {{ file.file_state === 'absent_confirmed' ? '已删' : '文件丢失' }}
+        </span>
+      </div>
       <div class="truncate text-body-sm font-medium leading-[1.3] text-snow" :title="file.title">
         {{ file.title }}
       </div>
@@ -82,8 +114,8 @@ function formatSize(bytes: number): string {
         <span class="font-mono text-graphite tracking-[0.05em]">{{ formatSize(file.size_bytes) }}</span>
       </div>
       <div class="mt-2 flex flex-nowrap gap-1.5" @click.stop>
-        <!-- identified: 归档 + 回收 -->
-        <template v-if="file.current_location === 'identified'">
+        <!-- in_library: 归档 + 回收 -->
+        <template v-if="file.status === 'in_library'">
           <n-popconfirm
             positive-text="归档"
             negative-text="取消"
@@ -95,7 +127,7 @@ function formatSize(bytes: number): string {
                 归档
               </button>
             </template>
-            把《{{ file.title }}》移到归档目录？
+            把《{{ file.title }}》归档？
           </n-popconfirm>
           <n-popconfirm
             positive-text="移到回收站"
@@ -112,8 +144,8 @@ function formatSize(bytes: number): string {
           </n-popconfirm>
         </template>
 
-        <!-- will_delete: 取回 + 删除 -->
-        <template v-else-if="file.current_location === 'will_delete'">
+        <!-- recycle: 取回 + 销毁（仅 file_state=present 时显示销毁按钮） -->
+        <template v-else-if="file.status === 'recycle'">
           <button
             class="inline-flex min-w-0 flex-1 items-center justify-center gap-1 whitespace-nowrap rounded-full border border-slate bg-transparent px-2 py-1.5 font-sans text-caption font-medium text-snow transition-[border-color,background-color] duration-150 hover:border-graphite hover:bg-snow/4"
             @click="emit('restore', file.id)"
@@ -122,7 +154,7 @@ function formatSize(bytes: number): string {
             取回
           </button>
           <n-popconfirm
-            v-if="file.has_physical_file"
+            v-if="file.file_state === 'present'"
             positive-text="永久删除"
             negative-text="取消"
             :positive-button-props="{ type: 'error' }"
@@ -139,13 +171,24 @@ function formatSize(bytes: number): string {
         </template>
 
         <!-- archived: 取回 -->
-        <template v-else-if="file.current_location === 'archived'">
+        <template v-else-if="file.status === 'archived'">
           <button
             class="inline-flex min-w-0 flex-1 items-center justify-center gap-1 whitespace-nowrap rounded-full border border-slate bg-transparent px-2 py-1.5 font-sans text-caption font-medium text-snow transition-[border-color,background-color] duration-150 hover:border-graphite hover:bg-snow/4"
             @click="emit('restore', file.id)"
           >
             <RotateCcw :size="13" :stroke-width="1.8" />
             取回
+          </button>
+        </template>
+
+        <!-- deleted: 恢复（取回） -->
+        <template v-else-if="file.status === 'deleted'">
+          <button
+            class="inline-flex min-w-0 flex-1 items-center justify-center gap-1 whitespace-nowrap rounded-full border border-slate bg-transparent px-2 py-1.5 font-sans text-caption font-medium text-snow transition-[border-color,background-color] duration-150 hover:border-graphite hover:bg-snow/4"
+            @click="emit('restore', file.id)"
+          >
+            <RotateCcw :size="13" :stroke-width="1.8" />
+            恢复
           </button>
         </template>
       </div>
