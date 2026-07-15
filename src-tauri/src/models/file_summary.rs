@@ -115,7 +115,6 @@ mod tests {
         let s = from_model_with_conflict_state(&m, true);
         assert_eq!(s.status, "deleted");
         assert_eq!(s.file_state, "absent_confirmed");
-        assert!(!s.has_physical_file);
         assert!(s.has_open_conflict);
         assert_eq!(s.cover_url.as_deref(), Some("/api/covers/h"));
     }

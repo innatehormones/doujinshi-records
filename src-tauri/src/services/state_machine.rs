@@ -128,13 +128,7 @@ pub async fn transition_with_dirs(
     Ok(())
 }
 
-/// V4 状态机的辅助查询：按 status + file_state 过滤。
-/// 用于 dirty_scanner / 命令层替代 V3 的 `current_location.is_in(...)`。
-pub fn status_filter<S: Into<String>>(status: S) -> sea_orm::Condition {
-    doujinshi_file::Column::Status.eq(status.into())
-}
-
-/// V4 帮助函数：扫 4 个业务 status（用于 dirty_scanner 等）
+/// V4 帮助函数：扫 4 个业务 status 中除 deleted 之外的 3 个（用于 dirty_scanner 等）
 pub fn non_deleted_statuses() -> [&'static str; 3] {
     ["in_library", "archived", "recycle"]
 }
@@ -157,12 +151,6 @@ pub fn expected_dir_for_status<'a>(
         "archived" => Some(archived_dir),
         _ => None,
     }
-}
-
-// 静默未使用导入 suppression（实际下游 task 会用到）
-#[allow(dead_code)]
-fn _filter_used() {
-    let _: sea_orm::Condition = doujinshi_file::Column::FileState.eq("present");
 }
 
 #[cfg(test)]

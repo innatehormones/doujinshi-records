@@ -180,7 +180,7 @@ async fn v8_renames_current_location_to_status_and_adds_file_state() {
         .await
         .unwrap()
         .into_iter()
-        .map(|r| r.try_get_by::<String>("name").unwrap_or_default())
+        .map(|r| r.try_get_by::<String, _>("name").unwrap_or_default())
         .collect();
     assert!(cols.iter().any(|n| n == "status"), "status 列应存在");
     assert!(cols.iter().any(|n| n == "last_seen_path"), "last_seen_path 列应存在");
@@ -197,15 +197,15 @@ async fn v8_renames_current_location_to_status_and_adds_file_state() {
         .await
         .unwrap();
     // t1: identified + present（has_physical_file=1 → file_state='present'）
-    assert_eq!(rows[0].try_get_by::<String>("status").unwrap(), "identified");
-    assert_eq!(rows[0].try_get_by::<String>("file_state").unwrap(), "present");
-    assert_eq!(rows[0].try_get_by::<String>("last_seen_path").unwrap(), "/p/1");
+    assert_eq!(rows[0].try_get_by::<String, _>("status").unwrap(), "identified");
+    assert_eq!(rows[0].try_get_by::<String, _>("file_state").unwrap(), "present");
+    assert_eq!(rows[0].try_get_by::<String, _>("last_seen_path").unwrap(), "/p/1");
     // t2: permanently_deleted → deleted, has_physical_file=0 → file_state='missing'
-    assert_eq!(rows[1].try_get_by::<String>("status").unwrap(), "deleted");
-    assert_eq!(rows[1].try_get_by::<String>("file_state").unwrap(), "missing");
+    assert_eq!(rows[1].try_get_by::<String, _>("status").unwrap(), "deleted");
+    assert_eq!(rows[1].try_get_by::<String, _>("file_state").unwrap(), "missing");
     // t3: archived + missing
-    assert_eq!(rows[2].try_get_by::<String>("status").unwrap(), "archived");
-    assert_eq!(rows[2].try_get_by::<String>("file_state").unwrap(), "missing");
+    assert_eq!(rows[2].try_get_by::<String, _>("status").unwrap(), "archived");
+    assert_eq!(rows[2].try_get_by::<String, _>("file_state").unwrap(), "missing");
 }
 
 #[tokio::test]

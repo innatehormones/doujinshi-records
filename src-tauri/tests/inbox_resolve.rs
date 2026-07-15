@@ -80,8 +80,8 @@ async fn seed_conflict(
         hash: Set(hash_a.clone()),
         ext: Set("zip".into()),
         size_bytes: Set(a_zip.len() as i64),
-        current_path: Set(a_path.to_string_lossy().into_owned()),
-        current_location: Set("identified".into()),
+        last_seen_path: Set(a_path.to_string_lossy().into_owned()),
+        status: Set("in_library".into()),
         created_at: Set(now),
         updated_at: Set(now),
         ..Default::default()
@@ -225,7 +225,7 @@ async fn resolve_replace_b_promotes_b_to_library() {
         .unwrap()
         .unwrap();
     assert_eq!(
-        a.current_location, "permanently_deleted",
+        a.status, "deleted",
         "A should be in permanently_deleted state"
     );
     assert!(!a.has_physical_file);
@@ -238,7 +238,7 @@ async fn resolve_replace_b_promotes_b_to_library() {
     assert_eq!(rows.len(), 2, "expected A + B rows, got {}", rows.len());
     let b_row = rows
         .iter()
-        .find(|r| r.current_location != "permanently_deleted")
+        .find(|r| r.status != "deleted")
         .unwrap();
     assert_ne!(b_row.hash, a.hash, "B's row should hold a different hash than A");
     assert_eq!(b_row.filename, "replace_b.zip");

@@ -46,7 +46,7 @@ async fn v2_upgrade_to_v3_preserves_existing_rows() {
     assert_eq!(rows.len(), 1, "V2 row should survive V3 upgrade");
     let row = &rows[0];
     assert_eq!(row.title, "[V2] existing");
-    assert_eq!(row.current_location, "identified");
+    assert_eq!(row.status, "in_library");
     assert!(
         row.has_physical_file,
         "V2 upgrade should default has_physical_file to true"
@@ -143,7 +143,7 @@ async fn v3_physically_deleted_rows_migrate_to_permanently_deleted() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(alive.current_location, "identified");
+    assert_eq!(alive.status, "in_library");
 
     // 5) dead 已落 permanently_deleted
     let dead = doujinshi_file::Entity::find()
@@ -152,8 +152,8 @@ async fn v3_physically_deleted_rows_migrate_to_permanently_deleted() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(dead.current_location, "permanently_deleted");
-    assert!(!dead.has_physical_file, "permanently_deleted 行应同步 has_physical_file=false");
+    assert_eq!(dead.status, "deleted");
+    assert!(!dead.has_physical_file, "deleted 行应同步 has_physical_file=false");
 }
 
 #[tokio::test]

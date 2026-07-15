@@ -29,8 +29,9 @@ async fn seed_rows(h: &mut common::Harness, n: usize) {
                     hash: Set(hash),
                     ext: Set("zip".into()),
                     size_bytes: Set(1024),
-                    current_path: Set(format!("/tmp/bench_{}.zip", i)),
-                    current_location: Set("identified".into()),
+                    last_seen_path: Set(format!("/tmp/bench_{}.zip", i)),
+                    status: Set("in_library".into()),
+                    file_state: Set("present".into()),
                     created_at: Set(Utc::now()),
                     updated_at: Set(Utc::now()),
                     ..Default::default()

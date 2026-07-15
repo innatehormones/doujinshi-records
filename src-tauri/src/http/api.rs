@@ -38,11 +38,9 @@ pub async fn search(
         );
     }
     if let Some(st) = p.status.as_deref().filter(|s| !s.is_empty()) {
-        // status 现在的语义 = 5 状态机里的 location 之一：
-        // identified / will_delete / archived / permanently_deleted
-        // 不传 / 不识别 → 不过滤
-        if matches!(st, "identified" | "will_delete" | "archived" | "permanently_deleted") {
-            q = q.filter(doujinshi_file::Column::CurrentLocation.eq(st));
+        // V4 status：`in_library / archived / recycle / deleted`。不传 / 不识别 → 不过滤
+        if matches!(st, "in_library" | "archived" | "recycle" | "deleted") {
+            q = q.filter(doujinshi_file::Column::Status.eq(st));
         }
     }
     let limit = p.limit.unwrap_or(50);
@@ -169,7 +167,7 @@ pub struct CompareSide {
     pub cover_url: Option<String>,
     pub image_names: Vec<String>,
     /// Absolute path on disk. A side reads this from
-    /// `doujinshi_file.current_path`; B side from `conflict.b_file_path`.
+    /// `doujinshi_file.last_seen_path`; B side from `conflict.b_file_path`.
     pub file_path: String,
     /// True when the archive file no longer exists on disk.
     pub zip_missing: bool,
@@ -205,7 +203,7 @@ pub async fn compare(State(s): State<ApiState>, Path(conflict_id): Path<i64>) ->
         .unwrap_or(None);
     let a = match a_row {
         Some(m) => {
-            let (names, missing, err) = read_image_names(&m.current_path);
+            let (names, missing, err) = read_image_names(&m.last_seen_path);
             let hash = m.hash.clone();
             CompareSide {
                 file_id: m.id,
@@ -213,7 +211,7 @@ pub async fn compare(State(s): State<ApiState>, Path(conflict_id): Path<i64>) ->
                 hash: Some(hash.clone()),
                 cover_url: cover_url_for(&hash),
                 image_names: names,
-                file_path: m.current_path.clone(),
+                file_path: m.last_seen_path.clone(),
                 zip_missing: missing,
                 zip_error: err,
             }
@@ -307,7 +305,7 @@ pub async fn images(
         Ok(None) => return (StatusCode::NOT_FOUND, "no file").into_response(),
         Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     };
-    let path = std::path::Path::new(&row.current_path);
+    let path = std::path::Path::new(&row.last_seen_path);
     if !path.exists() {
         return (
             StatusCode::OK,
@@ -420,7 +418,7 @@ async fn raw_image_response(
         Ok(None) => return Err(StatusCode::NOT_FOUND.into_response()),
         Err(e) => return Err((StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response()),
     };
-    let path = std::path::Path::new(&row.current_path);
+    let path = std::path::Path::new(&row.last_seen_path);
     if !path.exists() {
         return Err(StatusCode::NOT_FOUND.into_response());
     }

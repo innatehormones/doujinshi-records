@@ -89,8 +89,8 @@ async fn cover_returns_404_when_row_exists_but_no_cover_path() {
         hash: Set("abc123abc123abc123abc123abc123abc123abc123abc123abc123abc123abc1".into()),
         ext: Set("zip".into()),
         size_bytes: Set(0),
-        current_path: Set("/tmp/no_cover.zip".into()),
-        current_location: Set("identified".into()),
+        last_seen_path: Set("/tmp/no_cover.zip".into()),
+        status: Set("in_library".into()),
         created_at: Set(chrono::Utc::now()),
         updated_at: Set(chrono::Utc::now()),
         ..Default::default()
@@ -131,8 +131,8 @@ async fn cover_returns_jpeg_when_file_present() {
         hash: Set(hash.into()),
         ext: Set("zip".into()),
         size_bytes: Set(0),
-        current_path: Set("/tmp/has_cover.zip".into()),
-        current_location: Set("identified".into()),
+        last_seen_path: Set("/tmp/has_cover.zip".into()),
+        status: Set("in_library".into()),
         cover_path: Set(Some(rel)),
         created_at: Set(chrono::Utc::now()),
         updated_at: Set(chrono::Utc::now()),
@@ -178,8 +178,8 @@ async fn cover_returns_webp_when_file_extension_is_webp() {
         hash: Set(hash.into()),
         ext: Set("zip".into()),
         size_bytes: Set(0),
-        current_path: Set("/tmp/webp_cover.zip".into()),
-        current_location: Set("identified".into()),
+        last_seen_path: Set("/tmp/webp_cover.zip".into()),
+        status: Set("in_library".into()),
         cover_path: Set(Some(rel)),
         created_at: Set(chrono::Utc::now()),
         updated_at: Set(chrono::Utc::now()),
@@ -214,8 +214,8 @@ async fn cover_serves_placeholder_when_disk_file_missing() {
         hash: Set(hash.into()),
         ext: Set("zip".into()),
         size_bytes: Set(0),
-        current_path: Set("/tmp/ghost_cover.zip".into()),
-        current_location: Set("identified".into()),
+        last_seen_path: Set("/tmp/ghost_cover.zip".into()),
+        status: Set("in_library".into()),
         cover_path: Set(Some(rel)),
         created_at: Set(chrono::Utc::now()),
         updated_at: Set(chrono::Utc::now()),
@@ -258,8 +258,8 @@ async fn search_filters_by_title_and_status() {
             hash: Set(hash),
             ext: Set("zip".into()),
             size_bytes: Set(0),
-            current_path: Set(format!("/tmp/row_{}.zip", i)),
-            current_location: Set("identified".into()),
+            last_seen_path: Set(format!("/tmp/row_{}.zip", i)),
+            status: Set("in_library".into()),
             viewed: Set(viewed),
             marked_for_delete: Set(marked),
             created_at: Set(now),
@@ -424,8 +424,8 @@ async fn seed_file_with_zip(
         hash: Set("seed-hash".into()),
         ext: Set("zip".into()),
         size_bytes: Set(std::fs::metadata(zip_path).unwrap().len() as i64),
-        current_path: Set(zip_path.to_string_lossy().into_owned()),
-        current_location: Set("identified".into()),
+        last_seen_path: Set(zip_path.to_string_lossy().into_owned()),
+        status: Set("in_library".into()),
         created_at: Set(chrono::Utc::now()),
         updated_at: Set(chrono::Utc::now()),
         ..Default::default()
@@ -689,8 +689,8 @@ async fn images_returns_zip_missing_true_when_file_gone() {
         hash: Set("g".into()),
         ext: Set("zip".into()),
         size_bytes: Set(0),
-        current_path: Set("/nonexistent/ghost.zip".into()),
-        current_location: Set("identified".into()),
+        last_seen_path: Set("/nonexistent/ghost.zip".into()),
+        status: Set("in_library".into()),
         created_at: Set(chrono::Utc::now()),
         updated_at: Set(chrono::Utc::now()),
         ..Default::default()
@@ -743,8 +743,8 @@ async fn patch_updates_title_and_returns_204() {
         ext: Set("zip".into()),
         size_bytes: Set(0),
         circle: Set(Some("旧社团".into())),
-        current_path: Set("/tmp/p.zip".into()),
-        current_location: Set("identified".into()),
+        last_seen_path: Set("/tmp/p.zip".into()),
+        status: Set("in_library".into()),
         created_at: Set(chrono::Utc::now()),
         updated_at: Set(chrono::Utc::now()),
         ..Default::default()
@@ -781,8 +781,8 @@ async fn patch_with_empty_body_is_noop() {
         hash: Set("nh".into()),
         ext: Set("zip".into()),
         size_bytes: Set(0),
-        current_path: Set("/tmp/n.zip".into()),
-        current_location: Set("identified".into()),
+        last_seen_path: Set("/tmp/n.zip".into()),
+        status: Set("in_library".into()),
         created_at: Set(chrono::Utc::now()),
         updated_at: Set(chrono::Utc::now()),
         ..Default::default()
@@ -834,14 +834,14 @@ async fn seed_identified_row(h: &common::Harness, filename: &str, hash: &str) ->
         hash: Set(hash.into()),
         ext: Set("zip".into()),
         size_bytes: Set(0),
-        current_path: Set(h
+        last_seen_path: Set(h
             .resources_dir
             .path()
             .join("identified")
             .join(filename)
             .to_string_lossy()
             .into_owned()),
-        current_location: Set("identified".into()),
+        status: Set("in_library".into()),
         created_at: Set(now),
         updated_at: Set(now),
         ..Default::default()
@@ -873,7 +873,7 @@ async fn archive_moves_row_to_archived() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(row.current_location, "archived");
+    assert_eq!(row.status, "archived");
     assert!(h
         .resources_dir
         .path()
@@ -899,8 +899,8 @@ async fn restore_moves_archived_row_back_to_identified() {
         .unwrap()
         .unwrap()
         .into();
-    am.current_location = Set("archived".into());
-    am.current_path = Set(h
+    am.status = Set("archived".into());
+    am.last_seen_path = Set(h
         .resources_dir
         .path()
         .join("archived")
@@ -924,11 +924,13 @@ async fn restore_moves_archived_row_back_to_identified() {
         .await
         .unwrap()
         .unwrap();
-    assert_eq!(row.current_location, "identified");
+    assert_eq!(row.status, "in_library");
 }
 
+/// V4：任意 status 可切到任意 status——recycle → archived 不应再返 409。
+/// V3 这条测试是 409 拒绝非法转移；V4 应当 204 成功。
 #[tokio::test]
-async fn archive_rejects_illegal_transition_with_409() {
+async fn archive_allows_recycle_to_archived_in_v4() {
     let h = build_state().await;
     let id = seed_identified_row(&h, "x.zip", "hx").await;
     let now = chrono::Utc::now();
@@ -938,7 +940,7 @@ async fn archive_rejects_illegal_transition_with_409() {
         .unwrap()
         .unwrap()
         .into();
-    am.current_location = Set("will_delete".into());
+    am.status = Set("recycle".into());
     am.updated_at = Set(now);
     am.update(&h.state.conn).await.unwrap();
 
@@ -949,7 +951,14 @@ async fn archive_rejects_illegal_transition_with_409() {
         ))
         .await
         .unwrap();
-    assert_eq!(resp.status(), StatusCode::CONFLICT);
+    assert_eq!(resp.status(), StatusCode::NO_CONTENT);
+
+    let row = doujinshi_file::Entity::find_by_id(id)
+        .one(&h.state.conn)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(row.status, "archived");
 }
 
 #[tokio::test]
@@ -977,7 +986,7 @@ async fn list_dirty_respects_limit_offset() {
             file_path: Set(format!("/tmp/orphan_{}.zip", i)),
             reason: Set("orphan_file".into()),
             first_seen_at: Set(chrono::Utc::now().to_rfc3339()),
-            detected_dir: Set("identified".into()),
+            detected_dir: Set("in_library".into()),
             file_size: Set(0),
             ..Default::default()
         };
@@ -1013,8 +1022,8 @@ async fn images_endpoint_returns_304_when_etag_matches() {
         hash: Set(hash.into()),
         ext: Set("zip".into()),
         size_bytes: Set(2),
-        current_path: Set(zip_path.to_string_lossy().into_owned()),
-        current_location: Set("identified".into()),
+        last_seen_path: Set(zip_path.to_string_lossy().into_owned()),
+        status: Set("in_library".into()),
         created_at: Set(now),
         updated_at: Set(now),
         ..Default::default()
@@ -1072,8 +1081,8 @@ async fn state_transition_invalidates_preview_cache() {
         hash: Set("h-cache-inv".into()),
         ext: Set("zip".into()),
         size_bytes: Set(2),
-        current_path: Set(zip.to_string_lossy().into_owned()),
-        current_location: Set("identified".into()),
+        last_seen_path: Set(zip.to_string_lossy().into_owned()),
+        status: Set("in_library".into()),
         created_at: Set(now),
         updated_at: Set(now),
         ..Default::default()
