@@ -327,6 +327,18 @@ V3 落地后回顾，封面一直用 `.jpg` 后缀存储实际是 webp 字节的
 
 **为什么不开新 spec**：本次只是文件名约定变更，schema + 数据流不动。归档在本节末尾保留作为 changelog 锚点即可。
 
+## V4 后作废（2026-07-15）
+
+本 spec 描述的 5 状态机（`inbox / identified / will_delete / archived / permanently_deleted`）+ 强一致转移（archive / restore / mark_for_delete 要求源文件必须存在；目标位置同名则拒绝）在 V4 后作废。当前实现以 `2026-07-15-decouple-data-and-file.md` 为准：
+
+- `current_location` → `status`（4 值 `in_library / archived / recycle / deleted`，任意可切）
+- `has_physical_file` (bool) → `file_state` (TEXT, 3 态 `present / missing / absent_confirmed`)
+- `current_path` → `last_seen_path`
+- `permanently_deleted` 终态作废；`deleted` 是普通 status，可恢复
+- 状态机从"强一致"改为"DB 优先 + 文件 best-effort"（源文件缺失不阻塞 status 更新）
+- 目标位置同名从"拒绝转移"改为"自动覆盖 + 写 `dirty_data(reason='overwritten_by_state_switch')`"
+- 销毁从 `TransitionKind::PermanentlyDelete` 改为 `commands::recycle::permanent_delete_inner` 复合操作（status=deleted + file_state=absent_confirmed + best-effort 删文件 + preview_cache.invalidate）
+
 ## 待澄清（V3 落地前）
 
 无——核心问题已对齐。
