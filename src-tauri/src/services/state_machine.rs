@@ -1,54 +1,37 @@
-//! 5 状态机的转移核心。
+//! V4 状态机：DB 优先 + 文件 best-effort。
 //!
-//! 规则：DB UPDATE + 文件移动是一笔交易，必须都成功；src 不存在直接返 Err
-//! 拒绝（前端 catch 后报"文件已丢失，无法 [动作]"），绝不静默更新 `current_location`
-//! 制造数据 / 文件脱钩的脏态。
+//! 规则变更（相对 V3）：
+//! - 任意 status → 任意 status（V3 的"非法转移"概念消失）。
+//! - 源文件缺失不阻塞 status 更新；DB 永远更新，文件搬运 no-op。
+//! - 目标目录同名 = 视为孤儿，自动覆盖并写 `dirty_data(reason='overwritten_by_state_switch')`。
+//! - 跨设备 rename 走 copy + remove 兜底。
 //!
-//! 5 个合法转移：
-//!   - identified → archived (Archive)
-//!   - identified → will_delete (MarkForDelete)
-//!   - will_delete → identified (Restore)
-//!   - archived → identified (Restore)
-//!   - will_delete → permanently_deleted (PermanentlyDelete) — 回收站彻底删除
-//!   - identified → permanently_deleted (PermanentlyDelete) — 冲突 replace_b 的 A 行 ghost
-//! 其他转移非法，调用方应先检查状态。
-//!
-//! `PermanentlyDelete` 不走"rename 到目标目录"那一套，源文件存在就 best-effort
-//! 删、不存在就 no-op（这是"用户意图已删除"的状态机最终态，盘上文件不存是预期
-//! 而非异常）。Archive / MarkForDelete / Restore 三种走的是另一套护栏：
-//! src 不存在 / dest 已有同名 → 返 Err，DB 不动。
-//!
-//! 历史 spec 写"src 不存在时 no-op + physically_deleted=true"是 best-effort，
-//! 适用于后台扫描（scanner / dirty_scanner）但不应套用到用户主动点按钮的转移
-//! ——那等于撒谎说"操作成功"。本模块专门负责用户主动转移，src 缺失一律报错
-//! （除 PermanentlyDelete）；启动扫描仍由 `dirty_scanner` 维护 `has_physical_file`。
+//! 销毁（`status='deleted'`）不走本模块，由 `commands::recycle::permanent_delete_inner`
+//! 实现：复合操作（status=deleted + file_state=absent_confirmed + best-effort remove）。
 
 use anyhow::{anyhow, Result};
-use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
+use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
+use sea_orm::ColumnTrait;
 use std::path::{Path, PathBuf};
 
-use crate::db::entities::doujinshi_file;
+use crate::db::entities::{dirty_data, doujinshi_file};
 
 #[derive(Debug, Clone, Copy)]
 pub enum TransitionKind {
+    /// 任意 status → archived
     Archive,
+    /// 任意 status → in_library
     Restore,
+    /// 任意 status → recycle
     MarkForDelete,
-    /// 移到 permanently_deleted（5 状态机最终态）。源文件存在就 best-effort 删、
-    /// 不存在就 no-op；不走"src 不存在则拒绝"的护栏。
-    PermanentlyDelete,
 }
 
 impl TransitionKind {
-    fn target(&self, from: &str) -> Option<&'static str> {
-        match (self, from) {
-            (TransitionKind::Archive, "identified") => Some("archived"),
-            (TransitionKind::Restore, "will_delete") => Some("identified"),
-            (TransitionKind::Restore, "archived") => Some("identified"),
-            (TransitionKind::MarkForDelete, "identified") => Some("will_delete"),
-            (TransitionKind::PermanentlyDelete, "will_delete") => Some("permanently_deleted"),
-            (TransitionKind::PermanentlyDelete, "identified") => Some("permanently_deleted"),
-            _ => None,
+    pub fn target(self) -> &'static str {
+        match self {
+            TransitionKind::Archive => "archived",
+            TransitionKind::Restore => "in_library",
+            TransitionKind::MarkForDelete => "recycle",
         }
     }
 }
@@ -78,86 +61,108 @@ pub async fn transition_with_dirs(
     will_delete_dir: &Path,
     archived_dir: &Path,
 ) -> Result<()> {
+    let target = kind.target();
+
     let row = doujinshi_file::Entity::find_by_id(id)
         .one(conn)
         .await?
         .ok_or_else(|| anyhow!("file {} not found", id))?;
 
-    let target = kind
-        .target(&row.current_location)
-        .ok_or_else(|| {
-            anyhow!(
-                "illegal transition {:?} from {}",
-                kind,
-                row.current_location
-            )
-        })?;
-
-    let src = PathBuf::from(&row.current_path);
-    let mut am: doujinshi_file::ActiveModel = row.into();
-
-    if matches!(kind, TransitionKind::PermanentlyDelete) {
-        // 最终态：best-effort 删源文件（不存在就跳过；权限 / 占用失败也跳过），
-        // 然后落 permanently_deleted。`has_physical_file=false` 显式写，不
-        // 等启动扫描——这一行记录从此刻起在 UI 上对用户的语义就是"已删"。
-        if src.exists() {
-            let _ = std::fs::remove_file(&src);
-        }
-        am.current_location = Set(target.into());
-        am.has_physical_file = Set(false);
-        am.updated_at = Set(chrono::Utc::now());
-        am.update(conn).await?;
-        return Ok(());
-    }
-
     let target_dir = match target {
-        "identified" => identified_dir,
-        "will_delete" => will_delete_dir,
+        "in_library" => identified_dir,
+        "recycle" => will_delete_dir,
         "archived" => archived_dir,
-        other => return Err(anyhow!("unknown target {}", other)),
+        _ => return Err(anyhow!("unknown target status: {}", target)),
     };
 
-    let filename = src
-        .file_name()
-        .ok_or_else(|| anyhow!("invalid source path: {}", src.display()))?;
-    let dest = target_dir.join(filename);
+    let src = PathBuf::from(&row.last_seen_path);
+    let mut am: doujinshi_file::ActiveModel = row.into();
 
-    if !src.exists() {
-        // 源文件不在盘上：拒绝转移，绝不静默改 DB。
-        // `has_physical_file` 由 `dirty_scanner` 启动扫描维护，不由转移路径写。
-        return Err(anyhow!(
-            "file {} physical file missing (expected at {})",
-            id,
-            src.display()
-        ));
-    }
-    std::fs::create_dir_all(target_dir)?;
-    if dest.exists() {
-        // 目标位置已有同名文件：拒绝执行，让用户自己清理（删多出来的 / 改名），
-        // 之后再试。跟 inbox 入库的 `conflict` 表不是一回事，那个走流程；这里
-        // 只是单步拒绝，避免静默覆盖或制造"两个 DB 行指向同一盘上文件"的脏态。
-        return Err(anyhow!(
-            "file {} target already exists at {}",
-            id,
-            dest.display()
-        ));
-    }
-    if let Err(e) = std::fs::rename(&src, &dest) {
-        if matches!(e.kind(), std::io::ErrorKind::CrossesDevices)
-            || e.raw_os_error() == Some(17)
-        {
-            std::fs::copy(&src, &dest)?;
-            std::fs::remove_file(&src)?;
-        } else {
-            return Err(e.into());
+    // 文件搬运（best-effort）。
+    // 任意 status → 任意 to：策略只有"搬 / 不搬"两条。
+    if src.exists() {
+        let basename = src
+            .file_name()
+            .ok_or_else(|| anyhow!("invalid source path: {}", src.display()))?;
+        let dest = target_dir.join(basename);
+
+        std::fs::create_dir_all(target_dir)?;
+
+        // 目标位置已有同名 → 视为孤儿，自动覆盖。
+        // 先记录孤儿：原目标文件此刻将被覆盖，写一条 dirty_data 留底。
+        if dest.exists() {
+            let dirty = dirty_data::ActiveModel {
+                file_path: Set(dest.to_string_lossy().into_owned()),
+                file_size: Set(0),
+                detected_dir: Set(target.to_string()),
+                reason: Set("overwritten_by_state_switch".into()),
+                first_seen_at: Set(chrono::Utc::now().to_rfc3339()),
+                ..Default::default()
+            };
+            // best-effort；写失败不影响主流程
+            let _ = dirty.insert(conn).await;
         }
+
+        if let Err(e) = std::fs::rename(&src, &dest) {
+            // 跨设备 fallback（Windows ERROR_NOT_SAME_DEVICE=17）
+            if matches!(e.kind(), std::io::ErrorKind::CrossesDevices)
+                || e.raw_os_error() == Some(17)
+            {
+                std::fs::copy(&src, &dest)?;
+                std::fs::remove_file(&src)?;
+            } else {
+                return Err(e.into());
+            }
+        }
+
+        am.last_seen_path = Set(dest.to_string_lossy().into_owned());
+        // file_state 保持现有值，搬运成功 = present（已是 present）或被扫描器刷过
+    } else {
+        // 源文件不在：搬运 no-op，标记 missing
+        am.file_state = Set("missing".into());
     }
 
-    am.current_location = Set(target.into());
-    am.current_path = Set(dest.to_string_lossy().into_owned());
+    am.status = Set(target.into());
     am.updated_at = Set(chrono::Utc::now());
     am.update(conn).await?;
     Ok(())
+}
+
+/// V4 状态机的辅助查询：按 status + file_state 过滤。
+/// 用于 dirty_scanner / 命令层替代 V3 的 `current_location.is_in(...)`。
+pub fn status_filter<S: Into<String>>(status: S) -> sea_orm::Condition {
+    doujinshi_file::Column::Status.eq(status.into())
+}
+
+/// V4 帮助函数：扫 4 个业务 status（用于 dirty_scanner 等）
+pub fn non_deleted_statuses() -> [&'static str; 3] {
+    ["in_library", "archived", "recycle"]
+}
+
+/// 当前 status 是否是 deleted（用于 collision check 排除）
+pub fn is_deleted_status(s: &str) -> bool {
+    s == "deleted"
+}
+
+/// V4 帮助：dirty_scanner 在检查 expected_dir 时使用，避免重新字符串散落各处
+pub fn expected_dir_for_status<'a>(
+    status: &str,
+    identified_dir: &'a Path,
+    will_delete_dir: &'a Path,
+    archived_dir: &'a Path,
+) -> Option<&'a Path> {
+    match status {
+        "in_library" => Some(identified_dir),
+        "recycle" => Some(will_delete_dir),
+        "archived" => Some(archived_dir),
+        _ => None,
+    }
+}
+
+// 静默未使用导入 suppression（实际下游 task 会用到）
+#[allow(dead_code)]
+fn _filter_used() {
+    let _: sea_orm::Condition = doujinshi_file::Column::FileState.eq("present");
 }
 
 #[cfg(test)]
@@ -179,8 +184,9 @@ mod tests {
 
     async fn seed_row(
         conn: &sea_orm::DatabaseConnection,
-        location: &str,
-        current_path: &str,
+        status: &str,
+        last_seen_path: &str,
+        file_state: &str,
     ) -> i64 {
         let now = chrono::Utc::now();
         let m = doujinshi_file::ActiveModel {
@@ -189,8 +195,9 @@ mod tests {
             hash: Set("h".into()),
             ext: Set("zip".into()),
             size_bytes: Set(0),
-            current_path: Set(current_path.into()),
-            current_location: Set(location.into()),
+            last_seen_path: Set(last_seen_path.into()),
+            status: Set(status.into()),
+            file_state: Set(file_state.into()),
             created_at: Set(now),
             updated_at: Set(now),
             ..Default::default()
@@ -204,13 +211,14 @@ mod tests {
         conn
     }
 
+    /// V4 新语义：源文件缺失时状态切换仍成功（DB 优先）
     #[tokio::test]
-    async fn transition_fails_when_source_file_missing() {
+    async fn transition_succeeds_when_source_file_missing() {
         let (_dir, identified, will_delete, archived) = setup_dirs().await;
         let conn = open_db(_dir.path()).await;
-        let id = seed_row(&conn, "identified", "missing/f.zip").await;
+        let id = seed_row(&conn, "in_library", "missing/f.zip", "missing").await;
 
-        let err = transition_with_dirs(
+        transition_with_dirs(
             &conn,
             id,
             TransitionKind::Archive,
@@ -219,22 +227,110 @@ mod tests {
             &archived,
         )
         .await
-        .unwrap_err();
-        assert!(
-            err.to_string().contains("physical file missing"),
-            "err: {}",
-            err
-        );
+        .unwrap();
 
-        // 转移失败：DB 不动，current_location 仍为 identified。
         let row = doujinshi_file::Entity::find_by_id(id)
             .one(&conn)
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(row.current_location, "identified");
+        assert_eq!(row.status, "archived");
+        // 源文件不在 → last_seen_path 保留历史值
+        assert_eq!(row.last_seen_path, "missing/f.zip");
+        assert_eq!(row.file_state, "missing");
     }
 
+    /// V4 新语义：目标目录同名 = 视为孤儿，自动覆盖 + dirty_data 写入
+    #[tokio::test]
+    async fn transition_overwrites_orphan_in_target_dir() {
+        let (_dir, identified, will_delete, archived) = setup_dirs().await;
+        let conn = open_db(_dir.path()).await;
+
+        let src = identified.join("f.zip");
+        std::fs::write(&src, b"new").unwrap();
+        let id = seed_row(&conn, "in_library", &src.to_string_lossy(), "present").await;
+
+        // 在 will_delete 放同名孤儿
+        std::fs::write(will_delete.join("f.zip"), b"orphan").unwrap();
+
+        transition_with_dirs(
+            &conn,
+            id,
+            TransitionKind::MarkForDelete,
+            &identified,
+            &will_delete,
+            &archived,
+        )
+        .await
+        .unwrap();
+
+        // will_delete/f.zip 被覆盖
+        let content = std::fs::read(will_delete.join("f.zip")).unwrap();
+        assert_eq!(content, b"new");
+        // dirty_data 新增 overwritten_by_state_switch
+        let rows = crate::db::entities::dirty_data::Entity::find()
+            .all(&conn)
+            .await
+            .unwrap();
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].reason, "overwritten_by_state_switch");
+        assert_eq!(rows[0].detected_dir, "recycle");
+    }
+
+    /// V4：任意 status 可切到任意 status（V3 的"非法转移"概念消失）
+    #[tokio::test]
+    async fn any_to_any_status_is_allowed() {
+        let (_dir, identified, will_delete, archived) = setup_dirs().await;
+        let conn = open_db(_dir.path()).await;
+        // deleted → in_library 应当成功（V3 这是非法）
+        let id = seed_row(&conn, "deleted", "missing/f.zip", "absent_confirmed").await;
+
+        transition_with_dirs(
+            &conn,
+            id,
+            TransitionKind::Restore,
+            &identified,
+            &will_delete,
+            &archived,
+        )
+        .await
+        .unwrap();
+
+        let row = doujinshi_file::Entity::find_by_id(id)
+            .one(&conn)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(row.status, "in_library");
+    }
+
+    /// V4：所有转移都允许源文件缺失
+    #[tokio::test]
+    async fn all_transitions_succeed_when_source_missing() {
+        let (_dir, identified, will_delete, archived) = setup_dirs().await;
+        let conn = open_db(_dir.path()).await;
+
+        for (from, kind, expect_to) in [
+            ("in_library", TransitionKind::Archive, "archived"),
+            ("in_library", TransitionKind::MarkForDelete, "recycle"),
+            ("archived", TransitionKind::Restore, "in_library"),
+            ("recycle", TransitionKind::Restore, "in_library"),
+            ("deleted", TransitionKind::Restore, "in_library"),
+        ] {
+            let id = seed_row(&conn, from, "missing/f.zip", "missing").await;
+            transition_with_dirs(&conn, id, kind, &identified, &will_delete, &archived)
+                .await
+                .unwrap();
+            let row = doujinshi_file::Entity::find_by_id(id)
+                .one(&conn)
+                .await
+                .unwrap()
+                .unwrap();
+            assert_eq!(row.status, expect_to, "from={:?}", from);
+        }
+    }
+
+    /// V4：源文件存在时正常搬运
     #[tokio::test]
     async fn transition_moves_file_when_present() {
         let (_dir, identified, will_delete, archived) = setup_dirs().await;
@@ -242,7 +338,7 @@ mod tests {
 
         let src = identified.join("f.zip");
         std::fs::write(&src, b"data").unwrap();
-        let id = seed_row(&conn, "identified", &src.to_string_lossy()).await;
+        let id = seed_row(&conn, "in_library", &src.to_string_lossy(), "present").await;
 
         transition_with_dirs(
             &conn,
@@ -263,153 +359,6 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(row.current_location, "archived");
-    }
-
-    #[tokio::test]
-    async fn transition_fails_when_target_exists() {
-        let (_dir, identified, will_delete, archived) = setup_dirs().await;
-        let conn = open_db(_dir.path()).await;
-
-        let src = identified.join("f.zip");
-        std::fs::write(&src, b"data").unwrap();
-        let id = seed_row(&conn, "identified", &src.to_string_lossy()).await;
-
-        // 提前在 will_delete 放同名文件，模拟用户手动塞进去的冲突。
-        std::fs::write(will_delete.join("f.zip"), b"preexisting").unwrap();
-
-        let err = transition_with_dirs(
-            &conn,
-            id,
-            TransitionKind::MarkForDelete,
-            &identified,
-            &will_delete,
-            &archived,
-        )
-        .await
-        .unwrap_err();
-        assert!(
-            err.to_string().contains("target already exists"),
-            "err: {}",
-            err
-        );
-
-        // 转移失败：DB 不动，src 应保留不动，预放文件也应原样存在。
-        let row = doujinshi_file::Entity::find_by_id(id)
-            .one(&conn)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(row.current_location, "identified");
-        assert!(src.exists(), "src 应保留");
-        let dst_content = std::fs::read(will_delete.join("f.zip")).unwrap();
-        assert_eq!(dst_content, b"preexisting", "预放文件不应被覆盖");
-    }
-
-    #[tokio::test]
-    async fn transition_rejects_illegal() {
-        let (_dir, identified, will_delete, archived) = setup_dirs().await;
-        let conn = open_db(_dir.path()).await;
-        let id = seed_row(&conn, "archived", "missing/f.zip").await;
-
-        let err = transition_with_dirs(
-            &conn,
-            id,
-            TransitionKind::MarkForDelete,
-            &identified,
-            &will_delete,
-            &archived,
-        )
-        .await
-        .unwrap_err();
-        assert!(err.to_string().contains("illegal"), "err: {}", err);
-    }
-
-    #[tokio::test]
-    async fn transition_to_permanently_delete_removes_file_and_marks_gone() {
-        let (_dir, identified, will_delete, archived) = setup_dirs().await;
-        let conn = open_db(_dir.path()).await;
-
-        let src = will_delete.join("f.zip");
-        std::fs::write(&src, b"data").unwrap();
-        let id = seed_row(&conn, "will_delete", &src.to_string_lossy()).await;
-
-        transition_with_dirs(
-            &conn,
-            id,
-            TransitionKind::PermanentlyDelete,
-            &identified,
-            &will_delete,
-            &archived,
-        )
-        .await
-        .unwrap();
-
-        assert!(!src.exists(), "源文件应被 best-effort 删");
-        let row = doujinshi_file::Entity::find_by_id(id)
-            .one(&conn)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(row.current_location, "permanently_deleted");
-        assert!(!row.has_physical_file);
-    }
-
-    #[tokio::test]
-    async fn transition_to_permanently_delete_succeeds_when_source_missing() {
-        // PermanentlyDelete 跟其它转移不同：源文件不在 = 预期状态（用户/系统
-        // 已经清掉了），不应当成异常拒绝。直接落 permanently_deleted 即可。
-        let (_dir, identified, will_delete, archived) = setup_dirs().await;
-        let conn = open_db(_dir.path()).await;
-        let id = seed_row(&conn, "will_delete", "missing/f.zip").await;
-
-        transition_with_dirs(
-            &conn,
-            id,
-            TransitionKind::PermanentlyDelete,
-            &identified,
-            &will_delete,
-            &archived,
-        )
-        .await
-        .unwrap();
-
-        let row = doujinshi_file::Entity::find_by_id(id)
-            .one(&conn)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(row.current_location, "permanently_deleted");
-        assert!(!row.has_physical_file);
-    }
-
-    #[tokio::test]
-    async fn transition_to_permanently_delete_from_identified_works() {
-        // conflict resolve_conflict ReplaceB 的 A 行走的也是这条转移——
-        // identified → permanently_deleted 同样合法。
-        let (_dir, identified, will_delete, archived) = setup_dirs().await;
-        let conn = open_db(_dir.path()).await;
-        let src = identified.join("a.zip");
-        std::fs::write(&src, b"data").unwrap();
-        let id = seed_row(&conn, "identified", &src.to_string_lossy()).await;
-
-        transition_with_dirs(
-            &conn,
-            id,
-            TransitionKind::PermanentlyDelete,
-            &identified,
-            &will_delete,
-            &archived,
-        )
-        .await
-        .unwrap();
-
-        assert!(!src.exists());
-        let row = doujinshi_file::Entity::find_by_id(id)
-            .one(&conn)
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(row.current_location, "permanently_deleted");
+        assert_eq!(row.status, "archived");
     }
 }
