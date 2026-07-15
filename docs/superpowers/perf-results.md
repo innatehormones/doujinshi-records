@@ -2,7 +2,9 @@
 
 Measured by `cargo test --offline --test perf -- --nocapture` after sub-plan 4 indices were added. Debug-mode Rust (no codegen opts); Windows + NVMe; in-process axum Router via `tower::ServiceExt::oneshot` (no real socket, no CORS round trip).
 
-> **v6 后续**：(physically_deleted, created_at) 索引在 2026-07-14 提交 `8e4e248` 后被替换为 `(current_location, created_at)`。本文件记录的 search / count 性能特征仍然成立（同样的 compound 索引、同样的查询形态），但 `physically_deleted` 这一列本身已被砍——"已删"语义改为通过 `current_location='permanently_deleted'` 表达。
+> **v6 后续**：(physically_deleted, created_at) 索引在 2026-07-14 提交 `8e4e248` 后被替换为 `(current_location, created_at)`。
+>
+> **v8 后续（2026-07-15）**：V4 把 `current_location` 改名为 `status`（4 值 `in_library / archived / recycle / deleted`，任意可切），并把"已删"语义从 `physically_deleted` 列改为 `status='deleted'`。`current_path` 改名为 `last_seen_path`；`has_physical_file` (bool) 升级为 `file_state` (TEXT, `present / missing / absent_confirmed`)。`(current_location, created_at)` 索引相应改为 `(status, created_at)`。本文件记录的 search / count 性能特征仍然成立（同样的 compound 索引、同样的查询形态）。
 
 ## 1 000 rows
 

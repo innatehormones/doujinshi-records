@@ -43,6 +43,7 @@ git checkout HEAD -- src-tauri/Cargo.toml src-tauri/Cargo.lock src-tauri/build.r
 
 - 多次发生在 `cargo test` 长跑后（`bash.exe.stackdump` 同时出现）
 - 2026-07-11 至今至少 11 次跨 session 复发
+- 2026-07-15 V4 实施期再次复发（cargo test 长跑 + cargo clean 触发的两次 `git checkout --` 恢复）
 
 ## 长期方案
 
