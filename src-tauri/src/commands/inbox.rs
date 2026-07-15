@@ -117,20 +117,21 @@ pub async fn resolve_conflict_inner(
             }
         }
         ConflictAction::ReplaceB => {
-            // 把 A 行的状态推进到 permanently_deleted：A 的 zip best-effort
-            // 删掉、A 的行留在历史里、current_location 落到 permanently_deleted
-            // —— collision check（`identify_file` 看 current_location != permanently_deleted）
-            // 后续 B 就能用 A 的 filename 正常入库，不撞名。
+            // V4：把 A 推进到 status='deleted'（非终态）+ file_state='absent_confirmed'：
+            // A 的 zip best-effort 删掉、A 的行留在历史里——`deleted` 不参与撞名
+            // 查询，后续 B 就能用 A 的 filename 正常入库，不撞名。如果用户想
+            // 让 A 复活，可手动把 status 切回 in_library。
             let a_row = doujinshi_file::Entity::find_by_id(row.a_file_id)
                 .one(conn)
                 .await?;
             if let Some(a) = a_row {
-                let a_path = std::path::Path::new(&a.current_path);
+                let a_path = std::path::Path::new(&a.last_seen_path);
                 if a_path.exists() {
                     let _ = std::fs::remove_file(a_path);
                 }
                 let mut am: doujinshi_file::ActiveModel = a.into();
-                am.current_location = Set("permanently_deleted".into());
+                am.status = Set("deleted".into());
+                am.file_state = Set("absent_confirmed".into());
                 am.has_physical_file = Set(false);
                 am.updated_at = Set(chrono::Utc::now());
                 let _ = am.update(conn).await;
