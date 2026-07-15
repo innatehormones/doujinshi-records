@@ -21,21 +21,17 @@ pub async fn extract_and_save(raw: &[u8], out_path: &Path) -> Result<PathBuf> {
         tracing::info!(step = "resize1", resize_ms = t.elapsed().as_millis() as u64, "cover");
 
         let t = std::time::Instant::now();
-        crate::services::cover_format::encode_webp(scaled, &out)?;
+        crate::services::cover_format::encode_webp(scaled.clone(), &out)?;
         tracing::info!(step = "encode1", encode_ms = t.elapsed().as_millis() as u64, "cover");
 
-        // 预算控制：超 100KB 则再缩到 400 重写。
+        // 预算控制：超 100KB 则基于第一次的 600px scaled 缩到 400 重写——
+        // 复用 `scaled` 而不是重新 decode 原图，省掉 1-2s jpeg decode。
+        // 600 → 400 已经很小，resize 几乎瞬时。
         let budget = std::fs::metadata(&out)?.len();
         tracing::info!(step = "metadata", out_bytes = budget, "cover");
         if budget > 100 * 1024 {
             let t = std::time::Instant::now();
-            let img2 = ImageReader::new(std::io::Cursor::new(&raw))
-                .with_guessed_format()?
-                .decode()?;
-            tracing::info!(step = "decode2", decode_ms = t.elapsed().as_millis() as u64, "cover");
-
-            let t = std::time::Instant::now();
-            let smaller = resize_to_max(img2, 400);
+            let smaller = resize_to_max(scaled, 400);
             tracing::info!(step = "resize2", resize_ms = t.elapsed().as_millis() as u64, "cover");
 
             let t = std::time::Instant::now();
