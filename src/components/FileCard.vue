@@ -34,6 +34,15 @@ const STATUS_LABEL: Record<string, string> = {
   recycle: "回收",
   deleted: "已删",
 }
+/// V4 file_state → 中文标签 / tag 颜色。仅当 file_state ≠ present 时显示。
+const FILE_STATE_LABEL: Record<string, string> = {
+  missing: "文件丢失",
+  absent_confirmed: "已删",
+}
+const FILE_STATE_TAG_TYPE: Record<string, TagType> = {
+  missing: "error",
+  absent_confirmed: "error",
+}
 type TagType = "default" | "primary" | "info" | "success" | "warning" | "error"
 const STATUS_TAG_TYPE: Record<string, TagType> = {
   in_library: "success",
@@ -46,6 +55,12 @@ function statusLabel(s: string): string {
 }
 function statusTagType(s: string): TagType {
   return STATUS_TAG_TYPE[s] ?? "default"
+}
+function fileStateLabel(s: string): string {
+  return FILE_STATE_LABEL[s] ?? s
+}
+function fileStateTagType(s: string): TagType {
+  return FILE_STATE_TAG_TYPE[s] ?? "default"
 }
 
 </script>
@@ -99,12 +114,13 @@ function statusTagType(s: string): TagType {
         <n-tag size="small" :type="statusTagType(file.status)">
           {{ statusLabel(file.status) }}
         </n-tag>
-        <span
+        <n-tag
           v-if="file.file_state !== 'present'"
-          class="font-mono text-caption text-ember-red tracking-[0.05em]"
+          size="small"
+          :type="fileStateTagType(file.file_state)"
         >
-          {{ file.file_state === 'absent_confirmed' ? '已删' : '文件丢失' }}
-        </span>
+          {{ fileStateLabel(file.file_state) }}
+        </n-tag>
       </div>
       <div class="truncate text-body-sm font-medium leading-[1.3] text-snow" :title="file.title">
         {{ file.title }}
@@ -135,7 +151,7 @@ function statusTagType(s: string): TagType {
             @positive-click="emit('mark-delete', file.id)"
           >
             <template #trigger>
-              <button class="inline-flex min-w-0 flex-1 items-center justify-center gap-1 whitespace-nowrap rounded-full border border-ember-orange bg-transparent px-2 py-1.5 font-sans text-caption font-medium text-ember-orange transition-[border-color,background-color] duration-150 hover:bg-ember-orange/8">
+              <button class="inline-flex min-w-0 flex-1 items-center justify-center gap-1 whitespace-nowrap rounded-full border border-ember-red bg-transparent px-2 py-1.5 font-sans text-caption font-medium text-ember-red transition-[border-color,background-color] duration-150 hover:bg-ember-red/8">
                 <Trash2 :size="13" :stroke-width="1.8" />
                 回收
               </button>

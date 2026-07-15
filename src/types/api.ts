@@ -138,3 +138,13 @@ export interface RarErrorEntry {
   error: RarError
 }
 
+/// 扫描器状态：与 Rust `services::scanner::ScanStatus` 一一对应。
+/// `is_scanning` true 期间 `processed` 持续增长；完成时 `is_scanning`
+/// 变 false 并保留 `processed / total / failed` 供浮窗显示最终结果。
+export interface ScanStatus {
+  is_scanning: boolean
+  processed: number
+  total: number
+  failed: number
+}
+

@@ -1,5 +1,6 @@
 import { defineStore } from "pinia"
 import { ref, computed, watch } from "vue"
+import { listen, type UnlistenFn } from "@tauri-apps/api/event"
 import { api } from "@/api/tauri"
 import { fetchCompare, fetchDetailImages, patchMetadata } from "@/api/http"
 import type {
@@ -13,6 +14,7 @@ import type {
   RarErrorEntry,
   DirtyEntry,
   CircleCount,
+  ScanStatus,
 } from "@/types/api"
 
 /// Library 页分页大小。第一页 <= 24 时隐藏分页器（用户多看一两个就是
@@ -411,4 +413,43 @@ export const useInboxStore = defineStore("inbox", () => {
     load, gotoPage, resolve, loadCompare, resolveConflict,
     dismissRarError, retryExtractLarge, pushRarError,
   }
+})
+
+/// 扫描进度浮窗：订阅后端 `scanner-status` 事件 + 启动时拉一次
+/// 快照，避免"启动时已完成的一批"看不到。`dismissed` 让用户点 X 关掉
+/// 后保持隐藏，直到下一次 `is_scanning: true` 重置。`visible` 是浮窗
+/// 渲染条件：`total > 0`（扫过文件） && !dismissed。
+export const useScanStatusStore = defineStore("scan-status", () => {
+  const status = ref<ScanStatus | null>(null)
+  const dismissed = ref(false)
+  const visible = computed(
+    () => (status.value?.total ?? 0) > 0 && !dismissed.value,
+  )
+
+  let unlisten: UnlistenFn | null = null
+
+  function onEvent(next: ScanStatus) {
+    status.value = next
+    // 新一轮扫描开始时复位 dismissed —— 用户主动关过的浮窗只对"那一次"
+    // 生效，避免被永久压制。
+    if (next.is_scanning && next.processed === 0) {
+      dismissed.value = false
+    }
+  }
+
+  async function init() {
+    if (unlisten) return
+    try {
+      status.value = await api.getScanStatus()
+    } catch {
+      // 启动早期 Tauri 可能还没好；忽略即可，等首次事件进来。
+    }
+    unlisten = await listen<ScanStatus>("scanner-status", (e) => onEvent(e.payload))
+  }
+
+  function dismiss() {
+    dismissed.value = true
+  }
+
+  return { status, visible, init, dismiss }
 })

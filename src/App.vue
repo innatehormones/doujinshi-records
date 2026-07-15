@@ -5,7 +5,7 @@
 /// 设置入口搬到底部和主题切换并排。「顶部品牌名」「底部版本号」
 /// 都已删除——图标自身就是入口，文字和元数据在竖栏里是噪音。
 
-import { computed, h } from "vue"
+import { computed, h, onMounted } from "vue"
 import {
   NConfigProvider,
   NLayout,
@@ -29,12 +29,19 @@ import {
   SunMoon,
 } from "@lucide/vue"
 import { RouterView, useRoute, useRouter } from "vue-router"
-import { useThemeStore } from "@/stores"
+import { useThemeStore, useScanStatusStore } from "@/stores"
+import ScanProgressToast from "@/components/ScanProgressToast.vue"
 import { buildThemeOverrides } from "./styles/theme-overrides"
 
 const route = useRoute()
 const router = useRouter()
 const themeStore = useThemeStore()
+const scanStatusStore = useScanStatusStore()
+
+/// 启动时订阅 scanner-status 事件 + 拉一次快照。
+onMounted(() => {
+  scanStatusStore.init()
+})
 
 const activeKey = computed(() => route.name as string)
 
@@ -143,6 +150,7 @@ function cycleTheme() {
 
         <n-layout-content class="app-content">
           <router-view />
+          <ScanProgressToast />
         </n-layout-content>
       </n-layout>
     </n-message-provider>

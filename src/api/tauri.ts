@@ -8,6 +8,7 @@ import type {
   Page,
   RecyclePage,
   CircleCount,
+  ScanStatus,
 } from "@/types/api"
 
 export const api = {
@@ -47,6 +48,7 @@ export const api = {
     invoke<Page<DirtyEntry>>("list_dirty", { limit, offset }),
   getSettings: () => invoke<SettingsView>("get_settings"),
   manualScan: () => invoke<number>("manual_scan"),
+  getScanStatus: () => invoke<ScanStatus>("get_scan_status"),
   regenerateAuthToken: () => invoke<string>("regenerate_auth_token"),
   setHttpPort: (port: number) => invoke<void>("set_http_port", { port }),
   forceExtract: (path: string) => invoke<void>("force_extract", { path }),
