@@ -132,11 +132,11 @@ pub async fn identify_file(
         .one(conn)
         .await?
     {
-        if existing.current_location == "identified" {
-            // 同 hash 已存在且在 identified：inbox 副本是冗余的，不应该
+        if existing.status == "in_library" {
+            // 同 hash 已存在且在 in_library：inbox 副本是冗余的，不应该
             // 进入 identified 也不应该触发冲突（否则就退化成 step 4 的
             // name+ext 检查）。直接把 inbox 的副本删掉，仅刷 alias +
-            // filename + updated_at，current_path 仍指原 identified
+            // filename + updated_at，last_seen_path 仍指原 identified
             // 副本——否则 dirty_scanner 会把原来的 identified/[...].zip
             // 误判为孤儿。
             store_alias(conn, existing.id, &filename).await?;
@@ -146,7 +146,8 @@ pub async fn identify_file(
             am.updated_at = Set(chrono::Utc::now());
             am.update(conn).await?;
         } else {
-            // V3：行处于 will_delete / archived，移源文件到 identified/ 并恢复状态。
+            // V4：行处于 archived / recycle / deleted，移源文件到 identified/
+            // 并恢复为 status='in_library'。deleted 行复活也走同一条。
             let identified_dir = crate::config::AppConfig::load()?.identified_dir();
             reactivate_row(conn, existing.id, file_path, &identified_dir).await?;
         }
@@ -163,18 +164,18 @@ pub async fn identify_file(
     // (step 6) still guards against a same-renamed-filename file
     // already sitting in identified_dir.
     let collision = if force_rename.is_none() {
-        // 在 4 个"活的"状态里查 (filename, ext) 撞名——inbox 还没入库不算
-        // 占用，permanently_deleted 是 ghost 不再参与匹配。`force_rename`
-        // 表示调用方已确认是别名冲突，强制走"加后缀"路径，绕过该检查。
+        // V4：在 3 个"活的"状态里查 (filename, ext) 撞名——`deleted` 不参与
+        // （已销毁的记录不占用 filename）。`force_rename` 表示调用方已确认
+        // 是别名冲突，强制走"加后缀"路径，绕过该检查。
         doujinshi_file::Entity::find()
             .filter(
                 doujinshi_file::Column::Filename
                     .eq(&filename)
                     .and(doujinshi_file::Column::Ext.eq(&ext))
-                    .and(doujinshi_file::Column::CurrentLocation.is_in([
-                        "identified",
-                        "will_delete",
+                    .and(doujinshi_file::Column::Status.is_in([
+                        "in_library",
                         "archived",
+                        "recycle",
                     ])),
             )
             .one(conn)
@@ -407,10 +408,11 @@ async fn finalize_identification(
         series: Set(series),
         translator: Set(translator),
         version_tag: Set(version_tag),
-        current_path: Set(new_path.to_string_lossy().into_owned()),
-        current_location: Set("identified".into()),
+        last_seen_path: Set(new_path.to_string_lossy().into_owned()),
+        status: Set("in_library".into()),
         cover_path: Set(cover_rel),
         marked_for_delete: Set(false),
+        file_state: Set("present".into()),
         viewed: Set(false),
         note: Set(None),
         created_at: Set(now),
@@ -477,8 +479,9 @@ pub async fn reactivate_row(
     .await?;
 
     let mut am: doujinshi_file::ActiveModel = row.into();
-    am.current_path = Set(dest.to_string_lossy().into_owned());
-    am.current_location = Set("identified".into());
+    am.last_seen_path = Set(dest.to_string_lossy().into_owned());
+    am.status = Set("in_library".into());
+    am.file_state = Set("present".into());
     am.updated_at = Set(chrono::Utc::now());
     am.update(conn).await?;
     record_event(conn, row_id, "reactivated", None).await?;
@@ -606,10 +609,11 @@ Archive: test.rar
             hash: Set("h".into()),
             ext: Set("zip".into()),
             size_bytes: Set(4),
-            current_path: Set("placeholder".into()),
-            // reactivate_row 的来源是 permanently_deleted：用户把同 hash 的
-            // 新文件拖进 inbox，把 ghost 行复活回 identified。
-            current_location: Set("permanently_deleted".into()),
+            last_seen_path: Set("placeholder".into()),
+            // reactivate_row 的来源：V4 任何非 in_library 状态都能复活，
+            // 包括 deleted（用户把同 hash 新文件拖进 inbox 把 ghost 行拉回）。
+            status: Set("deleted".into()),
+            file_state: Set("absent_confirmed".into()),
             created_at: Set(now),
             updated_at: Set(now),
             ..Default::default()
@@ -621,6 +625,52 @@ Archive: test.rar
         assert!(!src.exists(), "src 应被移走");
         assert!(identified.join("f.zip").exists(), "dest 应在 identified/");
         let row = doujinshi_file::Entity::find_by_id(id).one(&conn).await.unwrap().unwrap();
-        assert_eq!(row.current_location, "identified");
+        assert_eq!(row.status, "in_library");
+        assert_eq!(row.file_state, "present");
+    }
+
+    /// V4：collision check 排除 status='deleted'
+    #[tokio::test]
+    async fn identify_file_skips_collision_check_for_deleted_rows() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = crate::db::connect(&dir.path().join("t.db")).await.unwrap();
+        crate::db::migrations::init_schema_versioned(&conn).await.unwrap();
+
+        // seed 一行 status='deleted'，filename='f.zip'
+        let now = chrono::Utc::now();
+        let m = doujinshi_file::ActiveModel {
+            title: Set("t".into()),
+            filename: Set("f.zip".into()),
+            hash: Set("h_deleted".into()),
+            ext: Set("zip".into()),
+            size_bytes: Set(0),
+            last_seen_path: Set("placeholder".into()),
+            status: Set("deleted".into()),
+            file_state: Set("absent_confirmed".into()),
+            created_at: Set(now),
+            updated_at: Set(now),
+            ..Default::default()
+        };
+        m.insert(&conn).await.unwrap();
+
+        // collision check：3 个活状态里查，不包含 deleted
+        let collision = doujinshi_file::Entity::find()
+            .filter(
+                doujinshi_file::Column::Filename
+                    .eq("f.zip")
+                    .and(doujinshi_file::Column::Ext.eq("zip"))
+                    .and(doujinshi_file::Column::Status.is_in([
+                        "in_library",
+                        "archived",
+                        "recycle",
+                    ])),
+            )
+            .one(&conn)
+            .await
+            .unwrap();
+        assert!(
+            collision.is_none(),
+            "deleted 行不应参与撞名检查"
+        );
     }
 }
