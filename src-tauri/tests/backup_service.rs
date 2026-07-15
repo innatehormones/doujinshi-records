@@ -5,7 +5,7 @@
 //! `cargo test --test <file>` 走独立二进制可正常跑，所以把测试统一放这里。
 //! 待 DLL 问题排查清楚后可迁回 src/。
 
-use doujinshi_records::services::backup::{backup_filename, BackupConfig};
+use doujinshi_records::services::backup::{backup_filename, hash_db_file, BackupConfig};
 
 #[test]
 fn backup_config_defaults() {
@@ -38,4 +38,14 @@ fn backup_filename_uses_utc() {
         .unwrap()
         .with_timezone(&chrono::Utc);
     assert_eq!(backup_filename(ts_local), "data-2026-07-15T18-30-45Z.db");
+}
+
+#[test]
+fn hash_db_file_matches_blake3() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("test.db");
+    std::fs::write(&path, b"hello world").unwrap();
+    let actual = hash_db_file(&path).unwrap();
+    let direct = blake3::hash(b"hello world").to_hex().to_string();
+    assert_eq!(actual, direct);
 }
