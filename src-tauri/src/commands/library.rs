@@ -20,7 +20,7 @@ pub async fn list_library(
     let conn = &state.conn;
     let mut query = doujinshi_file::Entity::find();
     if let Some(loc) = location.as_deref().filter(|s| !s.is_empty() && *s != "all") {
-        query = query.filter(doujinshi_file::Column::CurrentLocation.eq(loc));
+        query = query.filter(doujinshi_file::Column::Status.eq(loc));
     }
     if let Some(qs) = q.as_deref().filter(|s| !s.is_empty()) {
         let pattern = format!("%{}%", qs);
@@ -247,8 +247,8 @@ mod tests {
             size_bytes: Set(0),
             circle: Set(Some("旧社团".into())),
             note: Set(None),
-            current_path: Set("/tmp/m.zip".into()),
-            current_location: Set("identified".into()),
+            last_seen_path: Set("/tmp/m.zip".into()),
+            status: Set("in_library".into()),
             created_at: Set(now),
             updated_at: Set(now),
             ..Default::default()
