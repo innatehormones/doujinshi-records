@@ -14,14 +14,19 @@ pub struct Model {
     pub series: Option<String>,
     pub translator: Option<String>,
     pub version_tag: Option<String>,
-    pub current_path: String,
-    pub current_location: String,
+    /// 业务状态：`in_library / archived / recycle / deleted`，由用户决定
+    pub status: String,
+    /// 最后一次确认文件存在的路径；文件丢失时保留历史值
+    pub last_seen_path: String,
     pub cover_path: Option<String>,
     pub marked_for_delete: bool,
-    pub has_physical_file: bool,
+    /// 文件状态：`present / missing / absent_confirmed`，由扫描 + 销毁操作维护
+    pub file_state: String,
     pub viewed: bool,
     pub note: Option<String>,
     pub rating: Option<i32>,
+    /// 保留旧 has_physical_file 列作为冗余（迁移保险，后续版本可 drop）
+    pub has_physical_file: bool,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }

@@ -112,7 +112,7 @@ pub async fn init_schema(conn: &DatabaseConnection) -> Result<()> {
 // never edit an existing one. Each entry must be idempotent because
 // `init_schema_versioned` may be replayed against an already-upgraded DB.
 
-pub const CURRENT_VERSION: i64 = 7;
+pub const CURRENT_VERSION: i64 = 8;
 
 /// (version, human-readable name, body of the migration SQL to apply when
 /// moving from `version - 1` to `version`). Each migration must guard itself
@@ -173,6 +173,21 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         // AppConfig，不该污染 db::migrations），所以 v7 由 runner 单独调用
         // apply_v7_cover_extension_rename 处理，绕过 apply_migration。
         "",
+    ),
+    (
+        8,
+        "decouple data and file (status/last_seen_path + file_state)",
+        // 1) 新增 file_state 列（present/missing/absent_confirmed 三态）。
+        //    apply_migration 对 ALTER TABLE ADD COLUMN 走 pragma 幂等检查，
+        //    所以重复跑也没事。
+        // 2) RENAME COLUMN current_location → status、current_path → last_seen_path
+        //    （SQLite 3.25+ 支持 RENAME COLUMN）。
+        // 3) 数据迁移：permanently_deleted → deleted；has_physical_file=0 → file_state='missing'。
+        "ALTER TABLE doujinshi_file ADD COLUMN file_state TEXT NOT NULL DEFAULT 'present';\
+         ALTER TABLE doujinshi_file RENAME COLUMN current_location TO status;\
+         ALTER TABLE doujinshi_file RENAME COLUMN current_path TO last_seen_path;\
+         UPDATE doujinshi_file SET status = 'deleted' WHERE status = 'permanently_deleted';\
+         UPDATE doujinshi_file SET file_state = 'missing' WHERE has_physical_file = 0",
     ),
 ];
 
