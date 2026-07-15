@@ -5,7 +5,10 @@
 //! `cargo test --test <file>` 走独立二进制可正常跑，所以把测试统一放这里。
 //! 待 DLL 问题排查清楚后可迁回 src/。
 
-use doujinshi_records::services::backup::{backup_filename, hash_db_file, BackupConfig};
+use doujinshi_records::services::backup::{
+    backup_filename, clear_restore_marker, hash_db_file, read_restore_marker, write_restore_marker,
+    BackupConfig, RestorePending,
+};
 
 #[test]
 fn backup_config_defaults() {
@@ -48,4 +51,36 @@ fn hash_db_file_matches_blake3() {
     let actual = hash_db_file(&path).unwrap();
     let direct = blake3::hash(b"hello world").to_hex().to_string();
     assert_eq!(actual, direct);
+}
+
+#[test]
+fn restore_marker_round_trip() {
+    let dir = tempfile::tempdir().unwrap();
+    let marker = dir.path().join(".restore-pending.json");
+    let pending = RestorePending {
+        src: "C:/backups/data-2026-07-15T18-30-45Z.db".into(),
+        requested_at: "2026-07-15T18:30:50Z".into(),
+    };
+    write_restore_marker(&marker, &pending).unwrap();
+    let back = read_restore_marker(&marker).unwrap().unwrap();
+    assert_eq!(back.src, pending.src);
+    assert_eq!(back.requested_at, pending.requested_at);
+}
+
+#[test]
+fn restore_marker_absent_returns_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let marker = dir.path().join(".restore-pending.json");
+    assert!(read_restore_marker(&marker).unwrap().is_none());
+}
+
+#[test]
+fn restore_marker_clear_removes_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let marker = dir.path().join(".restore-pending.json");
+    let pending = RestorePending { src: "x".into(), requested_at: "y".into() };
+    write_restore_marker(&marker, &pending).unwrap();
+    clear_restore_marker(&marker);
+    assert!(!marker.exists());
+    clear_restore_marker(&marker); // 二次调用也不报错
 }

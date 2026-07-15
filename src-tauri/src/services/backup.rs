@@ -31,3 +31,31 @@ pub fn hash_db_file(path: &Path) -> anyhow::Result<String> {
     let bytes = std::fs::read(path)?;
     Ok(blake3::hash(&bytes).to_hex().to_string())
 }
+
+/// 启动期检测：是否有用户触发的还原待执行。
+/// 写在 `db_path` 同目录（`resources/.restore-pending.json`），
+/// `main.rs` 在打开 DB 之前读取并应用。
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct RestorePending {
+    pub src: String,
+    pub requested_at: String,
+}
+
+pub fn write_restore_marker(path: &Path, pending: &RestorePending) -> anyhow::Result<()> {
+    let json = serde_json::to_string_pretty(pending)?;
+    std::fs::write(path, json)?;
+    Ok(())
+}
+
+pub fn read_restore_marker(path: &Path) -> anyhow::Result<Option<RestorePending>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let text = std::fs::read_to_string(path)?;
+    let pending: RestorePending = serde_json::from_str(&text)?;
+    Ok(Some(pending))
+}
+
+pub fn clear_restore_marker(path: &Path) {
+    let _ = std::fs::remove_file(path);
+}
