@@ -4,10 +4,13 @@
 async fn main() {
     // tracing 默认没 subscriber 静默丢弃；fmt() 给个 stderr 输出
     // 简单初始化就够——配合 RUST_LOG 可过滤级别（默认 INFO）。
+    // 默认屏蔽 SeaORM 的 SQL 查询日志（每条 SELECT 都打一次，刷屏）；
+    // 排查慢查询时 RUST_LOG=info,sea_orm=info 临时开。
     tracing_subscriber::fmt()
         .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+            tracing_subscriber::EnvFilter::try_from_default_env().unwrap_or_else(|_| {
+                tracing_subscriber::EnvFilter::new("info,sea_orm=warn,sqlx=warn")
+            }),
         )
         .with_target(false)
         .init();
