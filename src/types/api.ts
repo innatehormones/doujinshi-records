@@ -5,9 +5,18 @@ export interface FileSummary {
   hash: string
   ext: string
   size_bytes: number
-  current_location: "inbox" | "identified" | "will_delete" | "archived"
-  has_physical_file: boolean
+  viewed: boolean
+  /// V4：业务状态。`in_library` / `archived` / `recycle` / `deleted`。
+  /// V3 时代的 `current_location`（含 `inbox` 投影）已废弃。
+  status: "in_library" | "archived" | "recycle" | "deleted"
+  /// V4：文件状态。`present` 文件还在期望位置；`missing` 启动时
+  /// dirty_scanner 发现文件丢失；`absent_confirmed` 走永久删除
+  /// 流程后用户已确认。前端按 (status, file_state) 组合决定 UI 提示。
+  file_state: "present" | "missing" | "absent_confirmed"
   cover_url: string | null
+  /// V4：后端 `commands::guards::ensure_no_open_conflict` 兜底拦截，
+  /// 浏览器扩展或直接 HTTP 也绕不开。
+  has_open_conflict: boolean
 }
 
 export interface DirtyEntry {
