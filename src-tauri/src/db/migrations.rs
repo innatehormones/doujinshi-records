@@ -182,11 +182,16 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         //    所以重复跑也没事。
         // 2) RENAME COLUMN current_location → status、current_path → last_seen_path
         //    （SQLite 3.25+ 支持 RENAME COLUMN）。
-        // 3) 数据迁移：permanently_deleted → deleted；has_physical_file=0 → file_state='missing'。
+        // 3) 数据迁移：V3 4 值 → V4 4 值。permanently_deleted → deleted、
+        //    identified → in_library、will_delete → recycle；archived 不变。
+        //    4 条 UPDATE 都带 WHERE 过滤，重复跑幂等。
+        // 4) has_physical_file=0 → file_state='missing'。
         "ALTER TABLE doujinshi_file ADD COLUMN file_state TEXT NOT NULL DEFAULT 'present';\
          ALTER TABLE doujinshi_file RENAME COLUMN current_location TO status;\
          ALTER TABLE doujinshi_file RENAME COLUMN current_path TO last_seen_path;\
          UPDATE doujinshi_file SET status = 'deleted' WHERE status = 'permanently_deleted';\
+         UPDATE doujinshi_file SET status = 'in_library' WHERE status = 'identified';\
+         UPDATE doujinshi_file SET status = 'recycle' WHERE status = 'will_delete';\
          UPDATE doujinshi_file SET file_state = 'missing' WHERE has_physical_file = 0",
     ),
 ];

@@ -108,9 +108,18 @@ export const useLibraryStore = defineStore("library", () => {
   // without exposing timer details to the view.
   const queryInput = ref("")
   const query = ref("")
-  const locationFilter = ref<
-    null | "identified" | "will_delete" | "archived" | "permanently_deleted"
-  >(null)
+  /// "看 / 标记" 过滤：all / viewed / not_viewed / marked。
+  const status = ref<"all" | "viewed" | "not_viewed" | "marked">("all")
+  /// V4 业务 status 过滤。
+  /// - `active` = 排除 recycle + deleted（UI 默认值，对应 spec 的"主列表"）
+  /// - `all` = 不限
+  /// - 其他 = 精确匹配
+  /// `active` 传给后端时是 `undefined`，后端只认合法的 4 个 status 值；
+  /// recycle + deleted 的隐藏由 `LibraryView` 渲染时过滤（避免分页
+  /// 拿到的 24 条里有 5 条是 deleted，剩 19 条导致分页数偏小）。
+  const statusFilter = ref<
+    "active" | "all" | "in_library" | "archived" | "recycle" | "deleted"
+  >("active")
   const loading = ref(false)
   /// 顶部社团 chip——单独调用 top_circles，不从当前页 items 聚合（聚合只算
   /// "当前页 top" 误导用户）。全表 GROUP BY 排序，每次 load 与翻页各自刷。
@@ -121,6 +130,14 @@ export const useLibraryStore = defineStore("library", () => {
   )
   /// 仅 1 页时隐藏分页器（按用户偏好："第一页少于等于 24 时不显示分页器"）。
   const showPager = computed(() => totalPages.value > 1)
+  /// `active` 模式只显示 in_library + archived，其他 status 的行
+  /// 仍由后端返回（让 total 反映真实数量），但被这条 computed 过滤。
+  const visibleItems = computed(() => {
+    if (statusFilter.value !== "active") return items.value
+    return items.value.filter(
+      (f) => f.status === "in_library" || f.status === "archived",
+    )
+  })
 
   let debounceTimer: number | undefined
   watch(queryInput, (v) => {
@@ -134,10 +151,15 @@ export const useLibraryStore = defineStore("library", () => {
     loading.value = true
     try {
       const offset = (page.value - 1) * LIBRARY_PAGE_SIZE
+      const statusArg =
+        statusFilter.value === "all" || statusFilter.value === "active"
+          ? undefined
+          : statusFilter.value
       const [pageRes, circlesRes] = await Promise.all([
         api.listLibrary(
           query.value || undefined,
-          locationFilter.value ?? undefined,
+          status.value === "all" ? undefined : status.value,
+          statusArg,
           LIBRARY_PAGE_SIZE,
           offset,
         ),
@@ -193,7 +215,8 @@ export const useLibraryStore = defineStore("library", () => {
   }
 
   return {
-    items, total, page, totalPages, showPager, query, locationFilter, loading,
+    items, visibleItems, total, page, totalPages, showPager, query,
+    status, statusFilter, loading,
     topCircles,
     load, gotoPage,
     archive, restore, markForDelete,
@@ -256,7 +279,7 @@ export const useRecycleStore = defineStore("recycle", () => {
     await api.permanentDelete(id)
     const f = present.value.find((f) => f.id === id)
     if (f) {
-      f.has_physical_file = false
+      f.file_state = "absent_confirmed"
       gone.value.push(f)
       present.value = present.value.filter((x) => x.id !== id)
     }

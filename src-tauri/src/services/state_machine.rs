@@ -10,8 +10,7 @@
 //! 实现：复合操作（status=deleted + file_state=absent_confirmed + best-effort remove）。
 
 use anyhow::{anyhow, Result};
-use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
-use sea_orm::ColumnTrait;
+use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
 use std::path::{Path, PathBuf};
 
 use crate::db::entities::{dirty_data, doujinshi_file};

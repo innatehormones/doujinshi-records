@@ -9,7 +9,10 @@ async fn fresh_conn() -> (tempfile::TempDir, sea_orm::DatabaseConnection) {
     let dir = tempfile::tempdir().unwrap();
     let db_path = dir.path().join("data.db");
     let conn = db::connect(&db_path).await.unwrap();
-    // 直接跑 v1..v6，不触发 v7（v7 需要 covers_dir）
+    // 跑完整 init_schema_versioned（v1..v8），把 schema_version 重置到 6
+    // 模拟"v6 库"，然后调用 init_schema_versioned_with_covers_dir 让 runner
+    // 从 v6 触发 v7 + v8（v8 是幂等 no-op，PRAGMA 检查 + UPDATE WHERE）。
+    // 这样 INSERT 用 V4 字段名（status / last_seen_path）才不会报错。
     migrations::init_schema_versioned(&conn).await.unwrap();
     (dir, conn)
 }
@@ -54,9 +57,9 @@ async fn v7_renames_jpg_files_and_updates_db_field() {
     conn.execute(Statement::from_string(
         backend.clone(),
         format!(
-            "INSERT INTO doujinshi_file (title, filename, hash, ext, size_bytes, current_path, \
-             current_location, cover_path, created_at, updated_at) VALUES (\
-             't', 't.zip', 'abc', 'zip', 0, 'doujinshi-identified/t.zip', 'identified', \
+            "INSERT INTO doujinshi_file (title, filename, hash, ext, size_bytes, last_seen_path, \
+             status, cover_path, created_at, updated_at) VALUES (\
+             't', 't.zip', 'abc', 'zip', 0, 'doujinshi-identified/t.zip', 'in_library', \
              'covers/abc.jpg', '{}', '{}')",
             now, now
         ),
@@ -100,9 +103,9 @@ async fn v7_renames_webp_files_too() {
     conn.execute(Statement::from_string(
         backend,
         format!(
-            "INSERT INTO doujinshi_file (title, filename, hash, ext, size_bytes, current_path, \
-             current_location, cover_path, created_at, updated_at) VALUES (\
-             't', 't.zip', 'def', 'zip', 0, 'doujinshi-identified/t.zip', 'identified', \
+            "INSERT INTO doujinshi_file (title, filename, hash, ext, size_bytes, last_seen_path, \
+             status, cover_path, created_at, updated_at) VALUES (\
+             't', 't.zip', 'def', 'zip', 0, 'doujinshi-identified/t.zip', 'in_library', \
              'covers/def.webp', '{}', '{}')",
             now, now
         ),

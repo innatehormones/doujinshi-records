@@ -188,7 +188,7 @@ async fn v8_renames_current_location_to_status_and_adds_file_state() {
     assert!(!cols.iter().any(|n| n == "current_location"), "current_location 应被 rename 走");
     assert!(!cols.iter().any(|n| n == "current_path"), "current_path 应被 rename 走");
 
-    // 3. 数据迁移：permanently_deleted → deleted, has_physical_file=0 → file_state='missing'
+    // 3. 数据迁移：V3 4 值 → V4 4 值，has_physical_file=0 → file_state='missing'
     let rows: Vec<sea_orm::QueryResult> = conn
         .query_all(Statement::from_string(
             backend.clone(),
@@ -196,14 +196,14 @@ async fn v8_renames_current_location_to_status_and_adds_file_state() {
         ))
         .await
         .unwrap();
-    // t1: identified + present（has_physical_file=1 → file_state='present'）
-    assert_eq!(rows[0].try_get_by::<String, _>("status").unwrap(), "identified");
+    // t1: identified → in_library，has_physical_file=1 → file_state='present'
+    assert_eq!(rows[0].try_get_by::<String, _>("status").unwrap(), "in_library");
     assert_eq!(rows[0].try_get_by::<String, _>("file_state").unwrap(), "present");
     assert_eq!(rows[0].try_get_by::<String, _>("last_seen_path").unwrap(), "/p/1");
-    // t2: permanently_deleted → deleted, has_physical_file=0 → file_state='missing'
+    // t2: permanently_deleted → deleted，has_physical_file=0 → file_state='missing'
     assert_eq!(rows[1].try_get_by::<String, _>("status").unwrap(), "deleted");
     assert_eq!(rows[1].try_get_by::<String, _>("file_state").unwrap(), "missing");
-    // t3: archived + missing
+    // t3: archived 不变 + missing
     assert_eq!(rows[2].try_get_by::<String, _>("status").unwrap(), "archived");
     assert_eq!(rows[2].try_get_by::<String, _>("file_state").unwrap(), "missing");
 }

@@ -9,18 +9,44 @@ use sea_orm::{
 use serde::{Deserialize, Serialize};
 use tauri::State;
 
+/// Library 主列表端点。
+///
+/// - `q` 标题/社团/文件名 `LIKE` 模糊匹配
+/// - `viewed` V3 时代就存在的"看 / 标记"过滤（`all` / `viewed` /
+///   `not_viewed` / `marked`）。V3 时期前端是死代码，V4 起真正落到 SQL
+/// - `status` V4 业务 status 过滤（`in_library` / `archived` /
+///   `recycle` / `deleted`）。`undefined` / `all` / `active` 都不加
+///   过滤——`active` 是 UI 概念（=排除 recycle + deleted），由前端在
+///   展示层隐藏，不应让后端误把它当作一个 status 值
+/// - `limit` / `offset` 分页
 #[tauri::command]
 pub async fn list_library(
     state: State<'_, AppState>,
     q: Option<String>,
-    location: Option<String>,
+    viewed: Option<String>,
+    status: Option<String>,
     limit: Option<u64>,
     offset: Option<u64>,
 ) -> AppResult<Page<file_summary::FileSummary>> {
     let conn = &state.conn;
     let mut query = doujinshi_file::Entity::find();
-    if let Some(loc) = location.as_deref().filter(|s| !s.is_empty() && *s != "all") {
-        query = query.filter(doujinshi_file::Column::Status.eq(loc));
+    if let Some(s) = status
+        .as_deref()
+        .filter(|s| !s.is_empty() && *s != "all" && *s != "active")
+    {
+        query = query.filter(doujinshi_file::Column::Status.eq(s));
+    }
+    match viewed.as_deref() {
+        Some("viewed") => {
+            query = query.filter(doujinshi_file::Column::Viewed.eq(true));
+        }
+        Some("not_viewed") => {
+            query = query.filter(doujinshi_file::Column::Viewed.eq(false));
+        }
+        Some("marked") => {
+            query = query.filter(doujinshi_file::Column::MarkedForDelete.eq(true));
+        }
+        _ => {}
     }
     if let Some(qs) = q.as_deref().filter(|s| !s.is_empty()) {
         let pattern = format!("%{}%", qs);

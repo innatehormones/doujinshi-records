@@ -13,11 +13,12 @@ import type {
 export const api = {
   listLibrary: (
     q?: string,
-    location?: string,
+    viewed?: string,
+    status?: string,
     limit?: number,
     offset?: number,
   ) =>
-    invoke<Page<FileSummary>>("list_library", { q, location, limit, offset }),
+    invoke<Page<FileSummary>>("list_library", { q, viewed, status, limit, offset }),
   topCircles: (limit?: number) =>
     invoke<CircleCount[]>("top_circles", { limit }),
   getById: (id: number) => invoke<FileSummary>("get_by_id", { id }),
