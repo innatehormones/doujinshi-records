@@ -12,6 +12,85 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 - 暴露本地 HTTP API（`127.0.0.1`，Bearer token 鉴权）供浏览器扩展查询。
 - 仅管理本地文件，**不下载、不分发**内容。
 
+## 核心概念（必读）
+
+这一节先讲清 5 件事——**同人志数据是什么、压缩文件是什么、它们的关系、状态机、操作**——任何 AI 接手前请先读懂。
+
+### 同人志数据（doujinshi data）
+
+- **本质**：DB 里 `doujinshi_file` 表的一行。**同人志记录永远只增不减**（"数据永生"）。
+- **组成**：
+  - **元数据**（人为 / 解析得到）：`title / circle / series / translator / version / note / rating`、原文件名、`hash`（BLAKE3 源文件指纹）、`size_bytes`
+  - **业务状态 `status`**：4 值（见下），**完全由用户决定**
+  - **文件状态 `file_state`**：3 态（见下），**由扫描 / 销毁操作维护**
+  - **`last_seen_path`**：最后一次确认文件存在时的路径；缺失时保留历史值
+  - **`viewed`**：已读标记
+  - **`has_open_conflict`**：是否有未解决的 `conflict` 表记录（前端禁用状态切换 + 后端 guard 兜底）
+- **派生数据**：从压缩包内容抽取出来、不在 DB 主表行里——封面（`resources/covers/<hash>.pwb`）、预览缩略图（`resources/_preview_cache/<file_id>-<idx>.webp`）。删主表行不会删派生数据，反之亦然。
+
+### 压缩文件（archive file）
+
+- **本质**：物理存在的 `.zip` / `.rar` 文件，位于 `resources/doujinshi*/` 之一（顶层、不递归子目录）。
+- **性质**：文件**不是同人志数据的必备附属**——一条 doujinshi 行可能没有对应文件（文件被用户拿走、被外部工具删了、被"销毁"操作删了），反之目录里的孤儿文件也可能在 DB 里找不到对应行（外部塞入、未识别）。
+- **目录与 status 的对应（仅是惯例，不是约束）**：
+  - `resources/doujinshi/` — inbox：等待入库识别
+  - `resources/doujinshi-identified/` — 通常 `status='in_library'` 时搬到这里
+  - `resources/doujinshi-will-delete/` — 通常 `status='recycle'` 时搬到这里
+  - `resources/doujinshi-archived/` — 通常 `status='archived'` 时搬到这里
+  - `resources/covers/` — 封面派生数据
+  - `resources/_preview_cache/` — 缩略图 LRU
+- **跨设备 rename 兜底**：`std::fs::rename` 跨设备（`CrossesDevices` / Windows `ERROR_NOT_SAME_DEVICE=17`）自动 `copy + remove`。
+- **不做"重新打包压缩"**：本系统只移动 / 抽取现有压缩文件，**不**生成 / 修改压缩文件本身。
+
+### 数据 ↔ 文件 关系
+
+- **数据是真实来源**（truth source），文件只是"可能存在的附庸"。
+- 状态机迁移时：文件存在 → 尽力搬运 / 删除；文件不存在 → 文件操作 no-op，但**仍允许 status 更新**。
+- 启动时 `dirty_scanner` 一次性观测：发现不一致 → 改 `file_state` + 写 `dirty_data`，**不动 status**。
+- 文件销毁（用户操作）：复合操作——同时设 `status='deleted'` + `file_state='absent_confirmed'` + best-effort `remove_file`。
+- `status='deleted'` ≠ 文件一定不在盘上。`status='deleted'` 只是用户的"业务结论"；`file_state` 才是文件此刻是否在盘上的事实。
+
+### 状态机（status + file_state 双轴）
+
+| 字段 | 取值 | 由谁维护 | 谁可改 |
+|---|---|---|---|
+| `status` | `in_library` / `archived` / `recycle` / `deleted` | 用户 | **任意来源的任意 status 可切到任意 status**（V4 移除"非法转移"） |
+| `file_state` | `present` / `missing` / `absent_confirmed` | 扫描器 + 销毁操作 | 启动 `dirty_scanner` / `permanent_delete_inner` / `reactivate_row` / 状态转移搬运成功路径 |
+
+- **合法转移规则**：任意 `status` → 任意 `status`；`file_state` 自动跟随（搬运成功 → present；搬运 no-op → missing）。
+- **状态转移入口**：`services::state_machine::transition_with_dirs(conn, id, kind, identified_dir, will_delete_dir, archived_dir)` 三目录必传（用于决定文件搬去哪）。
+- **"销毁"是复合操作**（不走 state_machine）：
+  1. `status='deleted'`
+  2. `file_state='absent_confirmed'`
+  3. best-effort `remove_file(last_seen_path)`
+  4. `preview_cache.invalidate(id)`（调用方负责）
+- **目标目录同名 = 视为孤儿**：自动覆盖 + 写 `dirty_data(reason='overwritten_by_state_switch')`（不要拒绝转移）。
+- **冲突解决 ReplaceB**：旧 A 行同样推到 `status='deleted' + file_state='absent_confirmed'`，让 B 入库占用同名（不再有"permanently_deleted 终态"概念）。
+
+### 操作（用户能做什么 / 系统自动做什么）
+
+**用户主动操作**：
+
+| 操作 | 触发 | 数据影响 | 文件影响 |
+|---|---|---|---|
+| 入库识别 | 拖文件到 `resources/doujinshi/` | 新增 doujinshi 行（`status='in_library'`） | 从 inbox/ 搬到 identified/ |
+| 归档 | Library 卡片点「归档」 | `status: 任意 → archived` | 搬到 archived/（若存在） |
+| 移到回收站 | Library 卡片点「回收」 | `status: 任意 → recycle` | 搬到 will_delete/（若存在） |
+| 销毁 | RecycleBin 卡片点「删除」 | `status='deleted' + file_state='absent_confirmed'` | best-effort 删源文件 + 失效 LRU 缩略图 |
+| 取回 / 恢复 | RecycleBin 卡片点「还原」/「恢复」 | `status: recycle/archived/deleted → in_library` | 搬到 identified/（若存在）；`file_state` 仍可能 missing |
+| 元数据编辑 | DetailView 表单保存 | PATCH 字段（`MetadataPatch`） | 无 |
+| 冲突解决 | ConflictView 选 4 选 1 | 标 resolved / 推 A 到 deleted / B 入库 | 见 conflict 章节 |
+
+**系统自动行为**：
+
+| 触发 | 行为 |
+|---|---|
+| 启动 | `init_schema_versioned` → 必要时跑迁移；`PreviewCache::new` → 扫盘加载；`dirty_scanner::scan` → 一次性回填 file_state + dirty_data；scanner watcher → 启动监听 |
+| inbox 文件变化（防抖 2s） | `scan_inbox_once` 遍历 → identify_file（BLAKE3 算 hash / 命中 reactivate / 撞名 conflict / 抽封面 / 落盘） |
+| `library-updated` 事件 | 前端并发刷新 3 个 store（library / recycle / inbox） |
+| `scanner-status` 事件 | 进度条浮窗 |
+| `rar-error` 事件 | rar 识别失败记录去重后展示 |
+
 ## 技术栈
 
 - **后端**：Rust（stable，rustfmt + clippy）+ Tauri 2 + SeaORM 1.1（SQLite）+ Axum 0.7 + notify-debouncer-full 0.3 + BLAKE3 + lru 0.12 + webp 0.3
@@ -104,50 +183,36 @@ src/
 
 ```
 resources/                # 运行时数据（git 忽略）
-├── doujinshi/            # 入库（顶层 .zip/.rar，不递归子目录）
-├── doujinshi-identified/ # 状态：identified
-├── doujinshi-will-delete/# 状态：will_delete（回收站）
-├── doujinshi-archived/   # 状态：archived
-├── covers/               # 提取的封面（webp，V3+；旧 V1/V2 是 jpg，按 magic bytes 探测 mime）
+├── doujinshi/            # inbox：等待入库识别（顶层 .zip/.rar，不递归子目录）
+├── doujinshi-identified/ # 通常对应 status='in_library' 的文件存放位置
+├── doujinshi-will-delete/# 通常对应 status='recycle' 的文件存放位置（回收站）
+├── doujinshi-archived/   # 通常对应 status='archived' 的文件存放位置
+├── covers/               # 抽取的封面（webp V3+，旧 V1/V2 是 jpg；HTTP 按 magic bytes 探测 mime；V7+ 文件名 .pwb）
 ├── _preview_cache/       # LRU 缩略图：<file_id>-<image_index>.webp
 └── data.db               # SQLite
 ```
 
+> 目录与 status 的对应**只是惯例**：状态机搬运时按 target status 把文件搬到对应目录；但用户 / 外部工具可以从任一目录挪走文件而不通知软件——下次启动 `dirty_scanner` 会发现并打 `file_state='missing'`。
+
 ## 核心架构
 
-### 数据流（inbox → identified）
+### 数据流（inbox → in_library，自动识别入库）
+
+> 这是系统**唯一**的自动状态变更——用户拖文件到 inbox，由 scanner 调 identifier 把"无名压缩文件"变成"一条新的 doujinshi 数据 + 一个搬到 identified/ 的文件"。其他 status 切换都是用户手动操作。
 
 `scanner.rs::Scanner::scan_inbox_once` 遍历 `*.zip` / `*.rar` → `identifier::identify_file`：
 
 1. RAR size gate（zip 不受影响；≤200 MB 静默通过，~1 GB 拒，>1 GB 拒）
 2. BLAKE3 算源文件 hash
-3. 命中已存在行：
-   - 行在 `identified` → 删 inbox 副本，刷 `filename_alias` + `filename`（避免 dirty_scanner 把原 identified 副本当孤儿）
-   - 行在 `will_delete` / `archived` → `reactivate_row`：把源文件 mv 回 `identified/`，状态恢复
-4. 解析文件名（`filename_parser`）
-5. `(filename, ext)` 撞名 → 写 `conflict` 表，留在 inbox 等待用户在 ConflictView 解决
+3. 命中已存在行（同 hash）：
+   - 行 `status='in_library'` → 删 inbox 副本，刷 `filename_alias` + `filename`（避免 dirty_scanner 把原 identified 副本当孤儿）
+   - 行 `status` ∈ {`archived`, `recycle`, `deleted`} → `reactivate_row`：把源文件 mv 回 `doujinshi-identified/`、`status → in_library`、刷 alias；`deleted` 行也能复活（V4 允许任意 status 切换）
+4. 未命中：解析文件名（`filename_parser`）
+5. `(filename, ext)` 撞名 → 写 `conflict` 表，留在 inbox 等待用户在 ConflictView 解决（collision check 排除 `status='deleted'`）
 6. 抽封面（zip：list + pick_cover 直读；rar：调用 unrar/7z 解到 tempdir 后 list+pick）
-7. 落盘到 `identified/`、插 `doujinshi_file` 行、写 `filename_alias` + `scan_event`
+7. 落盘到 `doujinshi-identified/`、插 `doujinshi_file` 行（`status='in_library'`、`file_state='present'`）、写 `filename_alias` + `scan_event`
 
 `identify_file` 出错时：rar 会通过 `rar-error` 事件把 `RarErrorPayload` 推到前端展示；扫描结束发 `library-updated`（带 processed 数）和 `scanner-status`。
-
-### V4 业务状态机（status + file_state）
-
-`doujinshi_file.status ∈ {"in_library", "archived", "recycle", "deleted"}`，由用户决定，任意可切。
-`doujinshi_file.file_state ∈ {"present", "missing", "absent_confirmed"}`，由扫描 + 销毁操作维护。
-
-合法转移：任意 status → 任意 status（V4 移除 V3 的"非法转移"概念）。
-状态机集中入口 `state_machine::transition_with_dirs(conn, id, kind, 3个目录)`：
-- 源文件缺失不阻塞 status 更新（DB 优先 + 文件 best-effort）；搬运 no-op 时 `file_state='missing'`
-- 目标目录同名 = 视为孤儿（dirty_data），自动覆盖 + 写 `dirty_data(reason='overwritten_by_state_switch')`
-- 跨设备 rename 走 copy + remove 兜底
-- `last_seen_path` 源文件缺失时保留历史值；搬运成功时更新为目标路径
-
-"销毁"是复合操作（不走 state_machine，由 `commands::recycle::permanent_delete_inner` 直写）：
-1. `status='deleted'`
-2. `file_state='absent_confirmed'`
-3. best-effort `remove_file(last_seen_path)`
-4. `preview_cache.invalidate(id)`
 
 ### 启动脏数据扫描（dirty_scanner.rs）
 
