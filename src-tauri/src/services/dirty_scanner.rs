@@ -1,11 +1,18 @@
-//! 启动时扫描 identified/will_delete/archived 三个目录：
-//! - 目录有文件但 DB 无匹配 → 写 dirty_data
-//! - DB 行 current_path 在对应目录不存在 → has_physical_file=false
-//! - DB 行 current_path 与 current_location 推导出的位置不一致 →
-//!   优先按 location 在期望目录下找回真实文件并修正 current_path；
-//!   找不到则记 dirty_data 让用户处理
+//! V4 启动脏数据扫描：扫 3 个数据目录（in_library/archived/recycle 三个业务状态
+//! 各对应一个目录，但 deleted 不对应任何目录，所以不扫）。
 //!
-//! inbox 目录不扫描（inbox 文件本就没入库）。
+//! dirty_scanner 维护 `file_state`（present/missing），不维护 status：
+//! - 目录有文件但 DB 无匹配 → 写 dirty_data(reason='orphan_file')
+//! - DB 行 last_seen_path 在对应目录但文件丢失 → file_state='missing' + dirty_data
+//! - DB 行 last_seen_path 漂出期望目录，但期望目录里有同文件名文件 → 自动修回
+//!   真实位置 + file_state='present'，陈旧路径留 dirty_data
+//! - 找不到则 dirty_data(reason='location_path_mismatch')
+//!
+//! inbox 目录不扫描（scanner 还在处理）。
+//!
+//! 注：detected_dir 用目录名（identified/will_delete/archived）写 dirty_data，
+//! 以保持与 V3 schema 视觉一致；state_machine 写的 overwritten_by_state_switch
+//! 用 V4 status 名（in_library/recycle/archived）——这两套语义不同，仅作为标签。
 
 use anyhow::Result;
 use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
@@ -22,6 +29,7 @@ pub async fn scan(
 ) -> Result<ScanReport> {
     let mut report = ScanReport::default();
 
+    // 3 个目录都扫；deleted 没有对应目录，不扫
     for (dir, name) in [
         (identified_dir, "identified"),
         (will_delete_dir, "will_delete"),
@@ -77,7 +85,7 @@ async fn scan_dir(
         }
 
         let matching_row = doujinshi_file::Entity::find()
-            .filter(doujinshi_file::Column::CurrentPath.eq(&path))
+            .filter(doujinshi_file::Column::LastSeenPath.eq(&path))
             .one(conn)
             .await?;
 
@@ -94,6 +102,7 @@ async fn scan_dir(
             report.orphans += 1;
         } else {
             let mut am: doujinshi_file::ActiveModel = matching_row.unwrap().into();
+            am.file_state = Set("present".into());
             am.has_physical_file = Set(true);
             am.update(conn).await?;
         }
@@ -101,11 +110,7 @@ async fn scan_dir(
     Ok(())
 }
 
-/// 把每行 DB 记录按 current_location 推到期望目录里找回真实文件。
-///
-/// - 文件确实在期望目录 → 修正 current_path，标记 has_physical_file=true
-/// - 文件不在期望目录、current_path 已陈旧 → 记 dirty_data 提示用户处理
-/// - 文件确实在 current_path（无须修复路径） → 仅刷 has_physical_file
+/// V4：按 status 把每行推到期望目录里找回真实文件。
 async fn scan_db_for_missing_files(
     conn: &DatabaseConnection,
     identified_dir: &Path,
@@ -114,32 +119,41 @@ async fn scan_db_for_missing_files(
     report: &mut ScanReport,
 ) -> Result<()> {
     let rows = doujinshi_file::Entity::find()
-        .filter(doujinshi_file::Column::CurrentLocation.is_in(["identified", "will_delete", "archived"]))
+        .filter(doujinshi_file::Column::Status.is_in(["in_library", "recycle", "archived"]))
         .all(conn)
         .await?;
     for row in rows {
-        let expected_dir = match row.current_location.as_str() {
-            "identified" => identified_dir,
-            "will_delete" => will_delete_dir,
+        let expected_dir = match row.status.as_str() {
+            "in_library" => identified_dir,
+            "recycle" => will_delete_dir,
             "archived" => archived_dir,
+            // 包括 deleted：deleted 不扫，但理论上 deleted 行不该进这里（filter 排除）
+            // 万一进来就 skip
             _ => continue,
         };
-        let p = std::path::Path::new(&row.current_path);
+        // dirty_data.detected_dir 字段沿用 V3 目录名（"identified"/"will_delete"/"archived"）
+        let detected_dir_label = match row.status.as_str() {
+            "in_library" => "identified",
+            "recycle" => "will_delete",
+            "archived" => "archived",
+            _ => "unknown",
+        };
+        let p = std::path::Path::new(&row.last_seen_path);
         let in_expected_dir = p.starts_with(expected_dir);
-        // 提前 clone 出后面仍要用的字段，避免 row.into() 之后被 move。
-        let location = row.current_location.clone();
-        let current_path_str = row.current_path.clone();
+        let status_label = row.status.clone();
+        let last_seen_path_str = row.last_seen_path.clone();
 
         if in_expected_dir {
             let exists = p.exists();
             let mut am: doujinshi_file::ActiveModel = row.into();
+            am.file_state = Set(if exists { "present".into() } else { "missing".into() });
             am.has_physical_file = Set(exists);
             if !exists {
                 report.db_missing_files += 1;
                 let am_dirty = dirty_data::ActiveModel {
-                    file_path: Set(current_path_str.clone()),
+                    file_path: Set(last_seen_path_str.clone()),
                     file_size: Set(0),
-                    detected_dir: Set(location.clone()),
+                    detected_dir: Set(detected_dir_label.into()),
                     reason: Set("db_row_file_missing".into()),
                     first_seen_at: Set(chrono::Utc::now().to_rfc3339()),
                     ..Default::default()
@@ -150,14 +164,14 @@ async fn scan_db_for_missing_files(
             continue;
         }
 
-        // current_path 不在 location 期望目录下：尝试按 filename 在期望目录里找回。
+        // last_seen_path 不在期望目录下：尝试按 filename 在期望目录里找回。
         let filename = match p.file_name() {
             Some(name) => name.to_owned(),
             None => {
                 let am_dirty = dirty_data::ActiveModel {
-                    file_path: Set(current_path_str.clone()),
+                    file_path: Set(last_seen_path_str.clone()),
                     file_size: Set(0),
-                    detected_dir: Set(location.clone()),
+                    detected_dir: Set(detected_dir_label.into()),
                     reason: Set("location_path_mismatch".into()),
                     first_seen_at: Set(chrono::Utc::now().to_rfc3339()),
                     ..Default::default()
@@ -171,13 +185,14 @@ async fn scan_db_for_missing_files(
         let mut am: doujinshi_file::ActiveModel = row.into();
         if candidate.exists() {
             let fixed = candidate.to_string_lossy().into_owned();
-            am.current_path = Set(fixed.clone());
+            am.last_seen_path = Set(fixed.clone());
+            am.file_state = Set("present".into());
             am.has_physical_file = Set(true);
-            // 陈旧 current_path 留作 dirty_data 一条，让用户知道曾被改过。
+            // 陈旧 last_seen_path 留作 dirty_data 一条
             let am_dirty = dirty_data::ActiveModel {
-                file_path: Set(current_path_str.clone()),
+                file_path: Set(last_seen_path_str.clone()),
                 file_size: Set(0),
-                detected_dir: Set(location.clone()),
+                detected_dir: Set(detected_dir_label.into()),
                 reason: Set("location_path_mismatch_resolved".into()),
                 first_seen_at: Set(chrono::Utc::now().to_rfc3339()),
                 ..Default::default()
@@ -185,11 +200,12 @@ async fn scan_db_for_missing_files(
             am_dirty.insert(conn).await?;
             am.update(conn).await?;
         } else {
+            am.file_state = Set("missing".into());
             am.has_physical_file = Set(false);
             let am_dirty = dirty_data::ActiveModel {
-                file_path: Set(current_path_str.clone()),
+                file_path: Set(last_seen_path_str.clone()),
                 file_size: Set(0),
-                detected_dir: Set(location.clone()),
+                detected_dir: Set(detected_dir_label.into()),
                 reason: Set("location_path_mismatch".into()),
                 first_seen_at: Set(chrono::Utc::now().to_rfc3339()),
                 ..Default::default()
@@ -198,6 +214,9 @@ async fn scan_db_for_missing_files(
             am.update(conn).await?;
             report.db_missing_files += 1;
         }
+
+        // 抑制未用变量警告
+        let _ = status_label;
     }
     Ok(())
 }
@@ -241,6 +260,7 @@ mod tests {
         assert_eq!(rows[0].detected_dir, "identified");
     }
 
+    /// V4：DB 行 last_seen_path 指向的文件丢失 → file_state='missing'
     #[tokio::test]
     async fn scan_marks_db_rows_with_missing_files() {
         let dir = tempfile::tempdir().unwrap();
@@ -259,8 +279,9 @@ mod tests {
             hash: Set("hh".into()),
             ext: Set("zip".into()),
             size_bytes: Set(0),
-            current_path: Set(identified.join("g.zip").to_string_lossy().into_owned()),
-            current_location: Set("identified".into()),
+            last_seen_path: Set(identified.join("g.zip").to_string_lossy().into_owned()),
+            status: Set("in_library".into()),
+            file_state: Set("present".into()),
             created_at: Set(now),
             updated_at: Set(now),
             ..Default::default()
@@ -271,7 +292,7 @@ mod tests {
 
         assert_eq!(report.db_missing_files, 1);
         let row = doujinshi_file::Entity::find().one(&conn).await.unwrap().unwrap();
-        assert!(!row.has_physical_file);
+        assert_eq!(row.file_state, "missing");
     }
 
     #[tokio::test]
@@ -314,10 +335,9 @@ mod tests {
         assert_eq!(rows.len(), 0);
     }
 
+    /// V4：自愈仍按 filename 在期望目录找回，修 last_seen_path + file_state
     #[tokio::test]
-    async fn scan_self_heals_stale_current_path_when_file_in_expected_dir() {
-        // current_path 指向 inbox（旧 bug 留下），但 location=will_delete，
-        // 文件其实就在 will_delete 目录下 → 启动扫描应自动改回正确路径。
+    async fn scan_self_heals_stale_last_seen_path_when_file_in_expected_dir() {
         let dir = tempfile::tempdir().unwrap();
         let identified = dir.path().join("identified");
         let will_delete = dir.path().join("will_delete");
@@ -340,9 +360,9 @@ mod tests {
             hash: Set("hh".into()),
             ext: Set("zip".into()),
             size_bytes: Set(0),
-            current_path: Set(stale_path.to_string_lossy().into_owned()),
-            current_location: Set("will_delete".into()),
-            has_physical_file: Set(false),
+            last_seen_path: Set(stale_path.to_string_lossy().into_owned()),
+            status: Set("recycle".into()),
+            file_state: Set("missing".into()),
             created_at: Set(now),
             updated_at: Set(now),
             ..Default::default()
@@ -352,15 +372,15 @@ mod tests {
         let _ = scan(&conn, &identified, &will_delete, &archived).await.unwrap();
 
         let row = doujinshi_file::Entity::find().one(&conn).await.unwrap().unwrap();
-        assert_eq!(row.current_path, real_path.to_string_lossy(),
-            "current_path 应被改回到 will_delete 下的真实位置");
-        assert!(row.has_physical_file, "has_physical_file 应被刷成 true");
+        assert_eq!(row.last_seen_path, real_path.to_string_lossy(),
+            "last_seen_path 应被改回到 will_delete 下的真实位置");
+        assert_eq!(row.file_state, "present");
 
         let dirty = dirty_data::Entity::find()
             .filter(dirty_data::Column::Reason.eq("location_path_mismatch_resolved"))
             .all(&conn)
             .await.unwrap();
-        assert_eq!(dirty.len(), 1, "陈旧 current_path 应留 dirty_data 记录");
+        assert_eq!(dirty.len(), 1, "陈旧 last_seen_path 应留 dirty_data 记录");
         assert_eq!(dirty[0].file_path, stale_path.to_string_lossy());
     }
 
@@ -385,8 +405,8 @@ mod tests {
             hash: Set("hh".into()),
             ext: Set("zip".into()),
             size_bytes: Set(0),
-            current_path: Set(stale_path.to_string_lossy().into_owned()),
-            current_location: Set("will_delete".into()),
+            last_seen_path: Set(stale_path.to_string_lossy().into_owned()),
+            status: Set("recycle".into()),
             created_at: Set(now),
             updated_at: Set(now),
             ..Default::default()
@@ -397,12 +417,47 @@ mod tests {
         assert_eq!(report.db_missing_files, 1);
 
         let row = doujinshi_file::Entity::find().one(&conn).await.unwrap().unwrap();
-        assert!(!row.has_physical_file);
+        assert_eq!(row.file_state, "missing");
         let dirty = dirty_data::Entity::find()
             .filter(dirty_data::Column::Reason.eq("location_path_mismatch"))
             .all(&conn)
             .await.unwrap();
         assert_eq!(dirty.len(), 1);
         assert_eq!(dirty[0].file_path, stale_path.to_string_lossy());
+    }
+
+    /// V4：扫描发现文件存在 → file_state='present'
+    #[tokio::test]
+    async fn scan_updates_file_state_to_present_when_file_exists() {
+        let dir = tempfile::tempdir().unwrap();
+        let identified = dir.path().join("identified");
+        let will_delete = dir.path().join("will_delete");
+        let archived = dir.path().join("archived");
+        std::fs::create_dir_all(&identified).unwrap();
+        std::fs::create_dir_all(&will_delete).unwrap();
+        std::fs::create_dir_all(&archived).unwrap();
+        let real = identified.join("g.zip");
+        touch(&real);
+
+        let conn = open_db(dir.path()).await;
+        let now = chrono::Utc::now();
+        let m = doujinshi_file::ActiveModel {
+            title: Set("t".into()),
+            filename: Set("g.zip".into()),
+            hash: Set("h".into()),
+            ext: Set("zip".into()),
+            size_bytes: Set(0),
+            last_seen_path: Set(real.to_string_lossy().into_owned()),
+            status: Set("in_library".into()),
+            file_state: Set("missing".into()),
+            created_at: Set(now),
+            updated_at: Set(now),
+            ..Default::default()
+        };
+        m.insert(&conn).await.unwrap();
+
+        let _ = scan(&conn, &identified, &will_delete, &archived).await.unwrap();
+        let row = doujinshi_file::Entity::find().one(&conn).await.unwrap().unwrap();
+        assert_eq!(row.file_state, "present");
     }
 }
