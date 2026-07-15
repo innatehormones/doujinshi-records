@@ -7,7 +7,7 @@
 
 use doujinshi_records::services::backup::{
     backup_filename, clear_restore_marker, hash_db_file, read_restore_marker, write_restore_marker,
-    BackupConfig, RestorePending,
+    BackupConfig, BackupStorage, LocalFsStorage, RestorePending,
 };
 
 #[test]
@@ -83,4 +83,38 @@ fn restore_marker_clear_removes_file() {
     clear_restore_marker(&marker);
     assert!(!marker.exists());
     clear_restore_marker(&marker); // 二次调用也不报错
+}
+
+#[test]
+fn local_fs_list_filters_only_backup_files() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::write(dir.path().join("data-2026-07-14T18-30-45Z.db"), b"x").unwrap();
+    // Windows mtime 精度 ~16ms；sleep 拉大差距确保排序稳定
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    std::fs::write(dir.path().join("data-2026-07-15T18-30-45Z.db"), b"x").unwrap();
+    std::fs::write(dir.path().join("foo.txt"), b"x").unwrap();
+    std::fs::write(dir.path().join("data-.tmp-uuid.db"), b"x").unwrap(); // temp 文件应被过滤
+
+    let storage = LocalFsStorage;
+    let list = storage.list_snapshots(dir.path()).unwrap();
+    assert_eq!(list.len(), 2);
+    // mtime 倒序
+    assert!(list[0].path.to_string_lossy().contains("2026-07-15"));
+    assert!(list[1].path.to_string_lossy().contains("2026-07-14"));
+}
+
+#[test]
+fn local_fs_delete_removes_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("data-2026-07-15T18-30-45Z.db");
+    std::fs::write(&p, b"x").unwrap();
+    LocalFsStorage.delete_snapshot(&p).unwrap();
+    assert!(!p.exists());
+}
+
+#[test]
+fn local_fs_delete_missing_is_ok() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("nope.db");
+    LocalFsStorage.delete_snapshot(&p).unwrap(); // 不报错
 }
