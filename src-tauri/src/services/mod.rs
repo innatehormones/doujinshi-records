@@ -1,4 +1,5 @@
 pub mod archive;
+pub mod backup;
 pub mod cover;
 pub mod cover_format;
 pub mod dirty_scanner;
