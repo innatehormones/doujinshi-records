@@ -17,3 +17,9 @@ impl Default for BackupConfig {
         Self { dir: String::new(), retention_count: 10 }
     }
 }
+
+/// 生成备份文件名 `data-{RFC3339 紧凑}.db`。紧凑版去冒号，保证文件名安全。
+/// 始终用 UTC：跨时区机器还原时文件名一致，避免命名混乱。
+pub fn backup_filename(ts: chrono::DateTime<chrono::Utc>) -> String {
+    format!("data-{}.db", ts.format("%Y-%m-%dT%H-%M-%SZ"))
+}

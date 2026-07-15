@@ -5,7 +5,7 @@
 //! `cargo test --test <file>` 走独立二进制可正常跑，所以把测试统一放这里。
 //! 待 DLL 问题排查清楚后可迁回 src/。
 
-use doujinshi_records::services::backup::BackupConfig;
+use doujinshi_records::services::backup::{backup_filename, BackupConfig};
 
 #[test]
 fn backup_config_defaults() {
@@ -21,4 +21,21 @@ fn backup_config_serde_round_trip() {
     let back: BackupConfig = serde_json::from_str(&s).unwrap();
     assert_eq!(back.dir, "D:/backups");
     assert_eq!(back.retention_count, 5);
+}
+
+#[test]
+fn backup_filename_compact_rfc3339() {
+    let ts = chrono::DateTime::parse_from_rfc3339("2026-07-15T18:30:45Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    assert_eq!(backup_filename(ts), "data-2026-07-15T18-30-45Z.db");
+}
+
+#[test]
+fn backup_filename_uses_utc() {
+    // 不同时区都归一为 UTC 后命名——避免本地时区在不同机器上撞名
+    let ts_local = chrono::DateTime::parse_from_rfc3339("2026-07-15T10:30:45-08:00")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    assert_eq!(backup_filename(ts_local), "data-2026-07-15T18-30-45Z.db");
 }
