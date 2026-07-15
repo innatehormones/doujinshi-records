@@ -109,6 +109,8 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ```bash
 pnpm install                              # 装依赖（首次或新增依赖后）
 pnpm tauri dev                            # 完整开发（Vite + Tauri + Rust）
+# RUST_LOG=info,sea_orm=info pnpm tauri dev   # 临时开 SeaORM SQL 日志查慢查询
+# RUST_LOG=debug pnpm tauri dev               # 临时全 debug 排查
 pnpm dev                                  # 仅前端（Vite HMR，后端需独立运行）
 pnpm build                                # 前端构建（vue-tsc --noEmit + Vite build）
 pnpm tauri build                          # 打包发布

@@ -129,13 +129,11 @@ pub async fn identify_file(
     tracing::info!(file = %filename, step = "hash", elapsed_ms = t.elapsed().as_millis() as u64, size_bytes, "identify step");
 
     // 2) hash exists?
-    let t = std::time::Instant::now();
     if let Some(existing) = doujinshi_file::Entity::find()
         .filter(doujinshi_file::Column::Hash.eq(&hash))
         .one(conn)
         .await?
     {
-        tracing::info!(file = %filename, step = "db_lookup_hash_hit", elapsed_ms = t.elapsed().as_millis() as u64, "identify step");
         if existing.status == "in_library" {
             // 同 hash 已存在且在 in_library：inbox 副本是冗余的，不应该
             // 进入 identified 也不应该触发冲突（否则就退化成 step 4 的
@@ -157,7 +155,6 @@ pub async fn identify_file(
         }
         return Ok(IdentifyOutcome::AlreadyKnown(existing.id));
     }
-    tracing::info!(file = %filename, step = "db_lookup_hash_miss", elapsed_ms = t.elapsed().as_millis() as u64, "identify step");
 
     // 3) parse filename
     let parsed = crate::services::filename_parser::parse(&filename);
@@ -168,7 +165,6 @@ pub async fn identify_file(
     // is guaranteed not to collide with the kept entry. The move
     // (step 6) still guards against a same-renamed-filename file
     // already sitting in identified_dir.
-    let t = std::time::Instant::now();
     let collision = if force_rename.is_none() {
         // V4：在 3 个"活的"状态里查 (filename, ext) 撞名——`deleted` 不参与
         // （已销毁的记录不占用 filename）。`force_rename` 表示调用方已确认
@@ -189,7 +185,6 @@ pub async fn identify_file(
     } else {
         None
     };
-    tracing::info!(file = %filename, step = "collision_check", elapsed_ms = t.elapsed().as_millis() as u64, "identify step");
     if let Some(a) = collision {
         record_conflict(conn, a.id, file_path, &filename).await?;
         return Ok(IdentifyOutcome::Conflict {
@@ -207,8 +202,7 @@ pub async fn identify_file(
     tracing::info!(file = %filename, step = "extract_cover", elapsed_ms = t.elapsed().as_millis() as u64, "identify step");
 
     // 6) finalize: move + insert + alias + event
-    let t = std::time::Instant::now();
-    let outcome = finalize_identification(
+    finalize_identification(
         conn,
         file_path,
         &filename,
@@ -224,9 +218,7 @@ pub async fn identify_file(
         identified_dir,
         force_rename,
     )
-    .await;
-    tracing::info!(file = %filename, step = "finalize", elapsed_ms = t.elapsed().as_millis() as u64, "identify step");
-    outcome
+    .await
 }
 
 /// Refuse RAR files that exceed the hard limit. Medium-tier files
