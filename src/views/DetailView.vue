@@ -17,7 +17,8 @@ import {
 import { ArrowLeft, Star, Archive, Trash2, RotateCcw } from "@lucide/vue"
 import { useLibraryStore, useSettingsStore } from "@/stores"
 import { api } from "@/api/tauri"
-import type { FileSummary, MetadataPatch, DetailImage } from "@/types/api"
+import { fetchReparse } from "@/api/http"
+import type { FileSummary, MetadataPatch, DetailImage, ReparseResult } from "@/types/api"
 import FullscreenPreview from "@/components/FullscreenPreview.vue"
 import { useThumbnailPipeline } from "@/composables/useThumbnailPipeline"
 import { usePreviewState } from "@/composables/usePreviewState"
@@ -37,6 +38,10 @@ const images = ref<DetailImage[]>([])
 const zipMissing = ref(false)
 const loading = ref(false)
 const saving = ref(false)
+const reparsing = ref(false)
+/// 最近一次「重新解析」的结果；显示在 meta 卡片顶部 alert 里，
+/// 让用户看清是哪条文件名、解析出了什么。
+const reparseNotice = ref<ReparseResult | null>(null)
 
 const pipeline = useThumbnailPipeline({
   fileId: id,
@@ -80,7 +85,6 @@ const editTitle = ref("")
 const editCircle = ref("")
 const editSeries = ref("")
 const editTranslator = ref("")
-const editVersion = ref("")
 const editNote = ref("")
 const editRating = ref<number | null>(null)
 
@@ -121,12 +125,11 @@ async function load() {
     file.value = f
     editTitle.value = f.title
     editCircle.value = f.circle ?? ""
-    /// 这些字段不在 FileSummary 里（保留为本地态，等保存后下次进页面再拉新值）
-    editSeries.value = ""
-    editTranslator.value = ""
-    editVersion.value = ""
-    editNote.value = ""
-    editRating.value = null
+    /// 元数据走 FileSummary 直接拿回，不再本地保留空字符串
+    editSeries.value = f.series ?? ""
+    editTranslator.value = f.translator ?? ""
+    editNote.value = f.note ?? ""
+    editRating.value = f.rating ?? null
     const r = await store.fetchDetailImagesFor(id.value)
     images.value = r.images
     zipMissing.value = r.zip_missing
@@ -148,16 +151,36 @@ async function save() {
       circle: editCircle.value || null,
       series: editSeries.value || null,
       translator: editTranslator.value || null,
-      version: editVersion.value || null,
       note: editNote.value || null,
       rating: editRating.value,
     }
     await store.updateMetadataFor(id.value, patch)
     message.success("已保存")
+    reparseNotice.value = null
   } catch (e) {
     message.error(String(e))
   } finally {
     saving.value = false
+  }
+}
+
+/// 重新跑 filename_parser 解析已入库文件名。**不写 DB**——结果只回填
+/// 表单 + 顶部 alert，等用户点「保存」才落库。`fetchReparse` 走 HTTP
+/// Bearer 鉴权路径（与 settings.apiBase 同源），与 store 刷新一致。
+async function reparse() {
+  reparsing.value = true
+  try {
+    const r = await fetchReparse(id.value)
+    reparseNotice.value = r
+    editTitle.value = r.title
+    editCircle.value = r.circle ?? ""
+    editSeries.value = r.series ?? ""
+    editTranslator.value = r.translator ?? ""
+    message.info("已重新解析表单，请检查后点「保存」")
+  } catch (e) {
+    message.error(String(e))
+  } finally {
+    reparsing.value = false
   }
 }
 
@@ -199,7 +222,7 @@ function statusLabel(): string {
   switch (file.value.status) {
     case "recycle": return "回收站"
     case "archived": return "归档"
-    case "deleted": return "已删"
+    case "deleted": return "已删除"
     default: return "已入库"
   }
 }
@@ -215,7 +238,21 @@ function statusTagType(): "default" | "primary" | "info" | "success" | "warning"
 }
 
 function fileStateTitle(s: string): string {
-  return s === "missing" ? "文件已丢失" : s === "absent_confirmed" ? "文件已销毁" : ""
+  switch (s) {
+    case "present": return "文件存在"
+    case "missing": return "文件已丢失"
+    case "absent_confirmed": return "文件已销毁"
+    default: return ""
+  }
+}
+
+function fileStateTagType(s: string): "default" | "primary" | "info" | "success" | "warning" | "error" {
+  switch (s) {
+    case "present": return "success"
+    case "missing": return "error"
+    case "absent_confirmed": return "error"
+    default: return "default"
+  }
 }
 </script>
 
@@ -284,11 +321,27 @@ function fileStateTitle(s: string): string {
 
         <n-card title="元数据" class="meta-pane">
           <n-space vertical>
+            <n-alert
+              v-if="reparseNotice"
+              type="info"
+              title="已重新解析（未保存）"
+              closable
+              @close="reparseNotice = null"
+              class="mb-1"
+            >
+              <div class="reparse-detail">
+                <div>文件名：{{ reparseNotice.filename }}</div>
+                <div>标题：{{ reparseNotice.title }}</div>
+                <div>社团：{{ reparseNotice.circle || '—' }}</div>
+                <div>系列：{{ reparseNotice.series || '—' }}</div>
+                <div>翻译：{{ reparseNotice.translator || '—' }}</div>
+                <div class="reparse-hint">表单已回填上述值。检查无误后点「保存」生效。</div>
+              </div>
+            </n-alert>
             <n-input v-model:value="editTitle" placeholder="标题" />
             <n-input v-model:value="editCircle" placeholder="社团 (circle)" />
             <n-input v-model:value="editSeries" placeholder="系列 (series)" />
             <n-input v-model:value="editTranslator" placeholder="翻译 (translator)" />
-            <n-input v-model:value="editVersion" placeholder="版本 (version)" />
             <n-input v-model:value="editNote" type="textarea" placeholder="备注" />
             <n-select
               v-model:value="editRating"
@@ -297,26 +350,31 @@ function fileStateTitle(s: string): string {
               placeholder="评分"
               clearable
             />
-            <n-button type="primary" @click="save" :loading="saving">保存</n-button>
+            <n-space>
+              <n-button type="primary" @click="save" :loading="saving">保存</n-button>
+              <n-button ghost @click="reparse" :loading="reparsing">重新解析元数据</n-button>
+            </n-space>
           </n-space>
         </n-card>
 
         <n-card title="操作" class="action-pane">
           <n-space vertical>
             <div class="file-meta mono">
-              <div>id: {{ file.id }}</div>
-              <div>hash: {{ file.hash.slice(0, 16) }}…</div>
-              <div>status: {{ file.status }}</div>
-              <div>file_state: {{ file.file_state }}</div>
+              <div>作品入库序号：{{ file.id }}</div>
+              <div>入库文件哈希：{{ file.hash.slice(0, 16) }}…</div>
+              <div>入库文件名称：{{ file.filename }}</div>
+              <div>
+                文件状态：
+                <n-tag size="small" :type="fileStateTagType(file.file_state)">
+                  {{ fileStateTitle(file.file_state) }}
+                </n-tag>
+              </div>
             </div>
             <div class="status-block">
               <span class="status-label">状态</span>
               <div class="status-row">
                 <n-tag :type="statusTagType()">
                   {{ statusLabel() }}
-                </n-tag>
-                <n-tag v-if="file.file_state !== 'present'" type="error">
-                  {{ fileStateTitle(file.file_state) }}
                 </n-tag>
               </div>
             </div>
@@ -484,5 +542,16 @@ function fileStateTitle(s: string): string {
   font-size: 11px;
   color: var(--color-smoke);
   word-break: break-all;
+}
+.reparse-detail {
+  display: grid;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--color-snow);
+}
+.reparse-hint {
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--color-smoke);
 }
 </style>

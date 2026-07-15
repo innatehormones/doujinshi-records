@@ -112,7 +112,6 @@ async fn v8_renames_current_location_to_status_and_adds_file_state() {
             circle TEXT,
             series TEXT,
             translator TEXT,
-            version_tag TEXT,
             current_path TEXT NOT NULL,
             current_location TEXT NOT NULL,
             cover_path TEXT,
@@ -166,8 +165,8 @@ async fn v8_renames_current_location_to_status_and_adds_file_state() {
     // 触发 v8
     migrations::init_schema_versioned(&conn).await.unwrap();
 
-    // 1. schema_version 升到 8
-    assert_eq!(current_version(&conn).await, 8);
+    // 1. schema_version 至少升到 8（v9 等后续迁移也会跑，所以用 >= 而不是 ==）
+    assert!(current_version(&conn).await >= 8);
     assert_eq!(current_version(&conn).await, migrations::CURRENT_VERSION);
 
     // 2. 字段重命名：current_location → status, current_path → last_seen_path
@@ -228,7 +227,6 @@ async fn v8_is_idempotent() {
             circle TEXT,
             series TEXT,
             translator TEXT,
-            version_tag TEXT,
             current_path TEXT NOT NULL,
             current_location TEXT NOT NULL,
             cover_path TEXT,

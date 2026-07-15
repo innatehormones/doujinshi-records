@@ -548,6 +548,33 @@ pub async fn patch_metadata(
     }
 }
 
+/// `GET /api/doujinshi/:id/reparse` — 重新跑 `filename_parser`，**不写
+/// DB**。返回解析结果让前端填表单，等用户点「保存」才落库。镜像
+/// `commands::library::reparse_metadata` Tauri command。
+pub async fn reparse_metadata(
+    State(s): State<ApiState>,
+    Path(id): Path<i64>,
+) -> impl IntoResponse {
+    use sea_orm::EntityTrait;
+    let row = match doujinshi_file::Entity::find_by_id(id).one(&s.conn).await {
+        Ok(Some(r)) => r,
+        Ok(None) => return StatusCode::NOT_FOUND.into_response(),
+        Err(e) => return (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
+    };
+    let p = crate::services::filename_parser::parse(&row.filename);
+    (
+        StatusCode::OK,
+        Json(json!(crate::commands::library::ReparseResult {
+            filename: row.filename,
+            title: p.title,
+            circle: p.circle,
+            series: p.series,
+            translator: p.translator,
+        })),
+    )
+        .into_response()
+}
+
 // ---------------------------------------------------------------------------
 // V3 endpoints: archive / restore / list_dirty
 // ---------------------------------------------------------------------------

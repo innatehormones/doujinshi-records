@@ -83,6 +83,10 @@ pub fn build_router(state: ApiState, preferred_port: Option<u16>) -> Result<u16>
             "/api/doujinshi/:id/restore",
             axum::routing::post(api::restore),
         )
+        .route(
+            "/api/doujinshi/:id/reparse",
+            get(api::reparse_metadata),
+        )
         .route("/api/dirty", get(api::list_dirty))
         .with_state(state.clone())
         // Bearer-token auth: must sit inside `with_state` (state-aware)
@@ -175,6 +179,10 @@ pub fn build_test_router(state: ApiState) -> axum::Router {
         .route(
             "/api/doujinshi/:id/restore",
             axum::routing::post(api::restore),
+        )
+        .route(
+            "/api/doujinshi/:id/reparse",
+            get(api::reparse_metadata),
         )
         .route("/api/dirty", get(api::list_dirty))
         .with_state(state.clone())

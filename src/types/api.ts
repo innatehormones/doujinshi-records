@@ -1,7 +1,12 @@
 export interface FileSummary {
   id: number
   title: string
+  filename: string
   circle: string | null
+  series: string | null
+  translator: string | null
+  note: string | null
+  rating: number | null
   hash: string
   ext: string
   size_bytes: number
@@ -76,7 +81,6 @@ export interface MetadataPatch {
   circle?: string | null
   series?: string | null
   translator?: string | null
-  version?: string | null
   note?: string | null
   rating?: number | null
 }
@@ -95,6 +99,17 @@ export interface DetailImagesResponse {
   images: DetailImage[]
   /// `true` when the archive file no longer exists on disk.
   zip_missing: boolean
+}
+
+/// `filename_parser` 在已入库文件名上的回显结果——DetailView 「重新解析
+/// 元数据」按钮的返回。**纯函数，不写 DB**：前端拿到后更新表单，等用户
+/// 点「保存」才落库。
+export interface ReparseResult {
+  filename: string
+  title: string
+  circle: string | null
+  series: string | null
+  translator: string | null
 }
 
 export interface SearchResult {

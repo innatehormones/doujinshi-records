@@ -18,7 +18,6 @@ pub async fn init_schema(conn: &DatabaseConnection) -> Result<()> {
             circle TEXT,
             series TEXT,
             translator TEXT,
-            version_tag TEXT,
             current_path TEXT NOT NULL,
             current_location TEXT NOT NULL,
             cover_path TEXT,
@@ -112,7 +111,7 @@ pub async fn init_schema(conn: &DatabaseConnection) -> Result<()> {
 // never edit an existing one. Each entry must be idempotent because
 // `init_schema_versioned` may be replayed against an already-upgraded DB.
 
-pub const CURRENT_VERSION: i64 = 8;
+pub const CURRENT_VERSION: i64 = 9;
 
 /// (version, human-readable name, body of the migration SQL to apply when
 /// moving from `version - 1` to `version`). Each migration must guard itself
@@ -193,6 +192,14 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
          UPDATE doujinshi_file SET status = 'in_library' WHERE status = 'identified';\
          UPDATE doujinshi_file SET status = 'recycle' WHERE status = 'will_delete';\
          UPDATE doujinshi_file SET file_state = 'missing' WHERE has_physical_file = 0",
+    ),
+    (
+        9,
+        "drop doujinshi_file.version_tag",
+        // 完全删 version_tag：filename_parser 不再产出、DetailView UI 也没这
+        // 个字段、HTTP MetadataPatch 不再有 `version`。SQLite DROP COLUMN
+        // 要求该列无索引引用——version_tag 从来没有过索引，直接掉。
+        "ALTER TABLE doujinshi_file DROP COLUMN version_tag",
     ),
 ];
 
@@ -277,6 +284,23 @@ async fn apply_migration(conn: &DatabaseConnection, version: i64, body: &str) ->
                     ))
                     .await?;
                 if rows.is_empty() {
+                    conn.execute(Statement::from_string(backend, body.to_string()))
+                        .await?;
+                }
+                return Ok(());
+            }
+            if let Some(col_part) = after_table.strip_prefix("DROP COLUMN ") {
+                let col = col_part.split_whitespace().next().unwrap_or("");
+                let rows: Vec<QueryResult> = conn
+                    .query_all(Statement::from_string(
+                        backend.clone(),
+                        format!(
+                            "SELECT name FROM pragma_table_info('{}') WHERE name='{}'",
+                            table, col
+                        ),
+                    ))
+                    .await?;
+                if !rows.is_empty() {
                     conn.execute(Statement::from_string(backend, body.to_string()))
                         .await?;
                 }

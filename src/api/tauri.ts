@@ -9,6 +9,7 @@ import type {
   RecyclePage,
   CircleCount,
   ScanStatus,
+  ReparseResult,
 } from "@/types/api"
 
 export const api = {
@@ -23,6 +24,7 @@ export const api = {
   topCircles: (limit?: number) =>
     invoke<CircleCount[]>("top_circles", { limit }),
   getById: (id: number) => invoke<FileSummary>("get_by_id", { id }),
+  reparseMetadata: (id: number) => invoke<ReparseResult>("reparse_metadata", { id }),
   markForDelete: (id: number) => invoke<void>("mark_for_delete", { id }),
   archive: (id: number) => invoke<void>("archive", { id }),
   restore: (id: number) => invoke<void>("restore", { id }),

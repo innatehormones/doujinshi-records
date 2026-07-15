@@ -9,7 +9,7 @@
 //! use this client so the bearer token is injected.
 
 import { useSettingsStore } from "@/stores"
-import type { ConflictCompare, DetailImagesResponse, MetadataPatch } from "@/types/api"
+import type { ConflictCompare, DetailImagesResponse, MetadataPatch, ReparseResult } from "@/types/api"
 
 export class ApiError extends Error {
   status: number
@@ -86,6 +86,10 @@ export async function fetchDetailImages(id: number): Promise<DetailImagesRespons
 
 export async function patchMetadata(id: number, patch: MetadataPatch): Promise<Response> {
   return apiPatch(`/api/doujinshi/${id}`, patch)
+}
+
+export async function fetchReparse(id: number): Promise<ReparseResult> {
+  return apiGet<ReparseResult>(`/api/doujinshi/${id}/reparse`)
 }
 
 export async function putImageThumb(id: number, index: number, blob: Blob): Promise<Response> {

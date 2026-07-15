@@ -13,7 +13,6 @@ pub struct Model {
     pub circle: Option<String>,
     pub series: Option<String>,
     pub translator: Option<String>,
-    pub version_tag: Option<String>,
     /// 业务状态：`in_library / archived / recycle / deleted`，由用户决定
     pub status: String,
     /// 最后一次确认文件存在的路径；文件丢失时保留历史值

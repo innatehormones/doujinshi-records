@@ -165,9 +165,46 @@ pub struct MetadataPatch {
     pub circle: Option<String>,
     pub series: Option<String>,
     pub translator: Option<String>,
-    pub version: Option<String>,
     pub note: Option<String>,
     pub rating: Option<i32>,
+}
+
+/// `filename_parser::parse` 在已入库文件名上的回显结果——给 DetailView
+/// 的「重新解析元数据」按钮用。**纯函数，不写 DB**：前端拿到结果后更新
+/// 表单，用户点「保存」才落库。
+#[derive(Debug, Serialize)]
+pub struct ReparseResult {
+    pub filename: String,
+    pub title: String,
+    pub circle: Option<String>,
+    pub series: Option<String>,
+    pub translator: Option<String>,
+}
+
+/// 重新跑 `filename_parser` 解析已入库文件的 filename，**不写库**。
+///
+/// 用途：V4 之前入库时若解析器逻辑有 bug（比如 translator 那条规则用了
+/// Latin1 字节版「翻訳」），DB 里的 circle/series/translator 可能不
+/// 准确；现在让用户在 DetailView 手动触发一次重新解析，看一眼结果，
+/// 觉得没问题再点「保存」覆盖。
+#[tauri::command]
+pub async fn reparse_metadata(
+    state: State<'_, AppState>,
+    id: i64,
+) -> AppResult<ReparseResult> {
+    use sea_orm::EntityTrait;
+    let row = doujinshi_file::Entity::find_by_id(id)
+        .one(&state.conn)
+        .await?
+        .ok_or_else(|| AppError::Other(format!("file {} not found", id)))?;
+    let p = crate::services::filename_parser::parse(&row.filename);
+    Ok(ReparseResult {
+        filename: row.filename,
+        title: p.title,
+        circle: p.circle,
+        series: p.series,
+        translator: p.translator,
+    })
 }
 
 /// Apply a partial metadata patch to a single doujinshi row. Called
@@ -188,7 +225,6 @@ pub async fn apply_metadata_patch(
     if let Some(v) = patch.circle      { am.circle      = Set(Some(v)); }
     if let Some(v) = patch.series      { am.series      = Set(Some(v)); }
     if let Some(v) = patch.translator  { am.translator  = Set(Some(v)); }
-    if let Some(v) = patch.version     { am.version_tag = Set(Some(v)); }
     if let Some(v) = patch.note        { am.note        = Set(Some(v)); }
     if let Some(v) = patch.rating      { am.rating      = Set(Some(v)); }
     am.updated_at = Set(chrono::Utc::now());
