@@ -2,6 +2,7 @@ use sea_orm::{ColumnTrait, DatabaseConnection, EntityTrait, PaginatorTrait, Quer
 
 use crate::db::entities::{conflict, doujinshi_file};
 
+/// V4：FileSummary 用 status + file_state 双字段模型。
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct FileSummary {
     pub id: i64,
@@ -11,8 +12,10 @@ pub struct FileSummary {
     pub ext: String,
     pub size_bytes: i64,
     pub viewed: bool,
-    pub current_location: String,
-    pub has_physical_file: bool,
+    /// 业务状态：`in_library / archived / recycle / deleted`
+    pub status: String,
+    /// 文件状态：`present / missing / absent_confirmed`
+    pub file_state: String,
     pub cover_url: Option<String>,
     /// 文件是否挂在未解决的命名冲突。`true` 时前端应禁用归档 / 移到回收站 /
     /// 彻底删除等按钮（后端同样兜底拦截，浏览器扩展或 HTTP 调用绕不开）。
@@ -40,8 +43,8 @@ pub fn from_model_with_conflict_state(m: &doujinshi_file::Model, has_open_confli
         ext: m.ext.clone(),
         size_bytes: m.size_bytes,
         viewed: m.viewed,
-        current_location: m.current_location.clone(),
-        has_physical_file: m.has_physical_file,
+        status: m.status.clone(),
+        file_state: m.file_state.clone(),
         cover_url: m.cover_path.as_ref().map(|_| format!("/api/covers/{}", m.hash)),
         has_open_conflict,
     }
@@ -84,7 +87,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn from_model_includes_location_and_has_physical_file() {
+    fn from_model_includes_status_and_file_state() {
         let now = chrono::Utc::now();
         let m = doujinshi_file::Model {
             id: 1,
@@ -97,11 +100,12 @@ mod tests {
             series: None,
             translator: None,
             version_tag: None,
-            current_path: "p".into(),
-            current_location: "permanently_deleted".into(),
+            status: "deleted".into(),
+            last_seen_path: "p".into(),
             cover_path: Some("covers/h.pwb".into()),
             marked_for_delete: false,
             has_physical_file: false,
+            file_state: "absent_confirmed".into(),
             viewed: false,
             note: None,
             rating: None,
@@ -109,7 +113,8 @@ mod tests {
             updated_at: now,
         };
         let s = from_model_with_conflict_state(&m, true);
-        assert_eq!(s.current_location, "archived");
+        assert_eq!(s.status, "deleted");
+        assert_eq!(s.file_state, "absent_confirmed");
         assert!(!s.has_physical_file);
         assert!(s.has_open_conflict);
         assert_eq!(s.cover_url.as_deref(), Some("/api/covers/h"));
