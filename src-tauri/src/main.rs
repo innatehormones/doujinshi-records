@@ -2,6 +2,16 @@
 
 #[tokio::main]
 async fn main() {
+    // tracing 默认没 subscriber 静默丢弃；fmt() 给个 stderr 输出
+    // 简单初始化就够——配合 RUST_LOG 可过滤级别（默认 INFO）。
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            tracing_subscriber::EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+        )
+        .with_target(false)
+        .init();
+
     let cfg = doujinshi_records::config::AppConfig::load()
         .expect("failed to load config");
     cfg.ensure_dirs().expect("failed to ensure dirs");
