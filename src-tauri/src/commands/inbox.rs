@@ -15,6 +15,10 @@ pub struct ConflictItem {
     pub id: i64,
     pub a_file_id: i64,
     pub a_title: String,
+    /// A 端封面 URL（`/api/covers/<hash>`）。`None` 表示 A 行已被删 /
+    /// 找不到对应 doujinshi 行，或 hash 字段为空。B 端没入库，永远没封面。
+    /// 前端 InboxView「显示封面」开关打开时用这个。
+    pub a_cover_url: Option<String>,
     pub b_filename: String,
     pub b_file_path: String,
     pub created_at: String,
@@ -26,25 +30,41 @@ pub async fn list_conflicts(
     limit: Option<u64>,
     offset: Option<u64>,
 ) -> AppResult<Page<ConflictItem>> {
+    list_conflicts_inner(&state.conn, limit, offset).await
+}
+
+/// Pure DB-side list, reachable from integration tests without
+/// pulling in `tauri::AppState` (which drags the GUI subsystem into
+/// the test binary — STATUS_ENTRYPOINT_NOT_FOUND on Windows).
+pub async fn list_conflicts_inner(
+    conn: &DatabaseConnection,
+    limit: Option<u64>,
+    offset: Option<u64>,
+) -> AppResult<Page<ConflictItem>> {
     let limit = limit.unwrap_or(50);
     let offset = offset.unwrap_or(0);
     let q = conflict::Entity::find().filter(conflict::Column::Resolved.eq(false));
-    let total = q.clone().count(&state.conn).await?;
-    let rows = q
-        .offset(offset)
-        .limit(limit)
-        .all(&state.conn)
-        .await?;
+    let total = q.clone().count(conn).await?;
+    let rows = q.offset(offset).limit(limit).all(conn).await?;
     let mut items = Vec::with_capacity(rows.len());
     for c in rows {
-        let a = doujinshi_file::Entity::find_by_id(c.a_file_id)
-            .one(&state.conn)
-            .await?;
-        let a_title = a.map(|m| m.title).unwrap_or_default();
+        let a = doujinshi_file::Entity::find_by_id(c.a_file_id).one(conn).await?;
+        let (a_title, a_cover_url) = match a {
+            Some(m) => {
+                let url = if m.hash.is_empty() {
+                    None
+                } else {
+                    Some(format!("/api/covers/{}", m.hash))
+                };
+                (m.title, url)
+            }
+            None => (String::new(), None),
+        };
         items.push(ConflictItem {
             id: c.id,
             a_file_id: c.a_file_id,
             a_title,
+            a_cover_url,
             b_filename: c.b_filename,
             b_file_path: c.b_file_path,
             created_at: c.created_at.to_rfc3339(),

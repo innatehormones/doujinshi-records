@@ -15,7 +15,9 @@
 mod common;
 
 use base64::Engine;
-use doujinshi_records::commands::inbox::{ConflictAction, resolve_conflict_inner};
+use doujinshi_records::commands::inbox::{
+    ConflictAction, list_conflicts_inner, resolve_conflict_inner,
+};
 use doujinshi_records::db::{self, entities::{conflict, doujinshi_file}};
 use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
 
@@ -275,4 +277,56 @@ async fn resolve_keep_both_inserts_b_with_copy_suffix() {
         .unwrap();
     assert_eq!(rows.len(), 2, "expected A + B(copy) rows");
     assert!(conflict_is_resolved(&env.conn, c_id).await);
+}
+
+/// 「显示封面」开关依赖 a_cover_url 字段。A 行的 hash 非空时必须
+/// 拼出 `/api/covers/<hash>` URL；A 行缺失或 hash 为空时为 None。
+#[tokio::test]
+async fn list_conflicts_populates_a_cover_url_from_a_hash() {
+    let env = make_env().await;
+    let (_a_id, _a_path, c_id, _b_hash) = seed_conflict(&env, "with_cover.zip").await;
+
+    let page = list_conflicts_inner(&env.conn, None, None).await.unwrap();
+    assert_eq!(page.total, 1);
+    let item = &page.items[0];
+    assert_eq!(item.id, c_id);
+    let url = item.a_cover_url.as_deref().expect("A 行 hash 非空，必须有封面 URL");
+    assert!(
+        url.starts_with("/api/covers/"),
+        "URL 必须走 /api/covers/ 路径：{url}"
+    );
+    assert!(
+        url.len() > "/api/covers/".len(),
+        "URL 必须带 hash 后缀：{url}"
+    );
+}
+
+/// A 行 hash 字段为空时 a_cover_url 必须是 None——前端「显示封面」
+/// 开关打开时静默不渲染即可。（A 行被删的 case 不会发生：conflict 表
+/// 的 a_file_id 有 FK ON DELETE CASCADE，A 不在了 conflict 也跟着没了。）
+#[tokio::test]
+async fn list_conflicts_a_cover_url_is_none_when_a_hash_empty() {
+    let env = make_env().await;
+    let (a_id, _a_path, c_id, _b_hash) = seed_conflict(&env, "empty_hash.zip").await;
+
+    // 把 A 行 hash 字段清空——这种数据在生产里不应该出现（hash 在
+    // identify_file 阶段强制计算），但 SQL 层面 hash 是 NOT NULL、
+    // 可空字符串。验证 list_conflicts_inner 对这种畸形数据不爆。
+    let row = doujinshi_file::Entity::find_by_id(a_id)
+        .one(&env.conn)
+        .await
+        .unwrap()
+        .unwrap();
+    let mut am: doujinshi_file::ActiveModel = row.into();
+    am.hash = Set(String::new());
+    am.update(&env.conn).await.unwrap();
+
+    let page = list_conflicts_inner(&env.conn, None, None).await.unwrap();
+    assert_eq!(page.total, 1);
+    let item = &page.items[0];
+    assert_eq!(item.id, c_id);
+    assert_eq!(
+        item.a_cover_url, None,
+        "A 行 hash 为空时 a_cover_url 必须为 None"
+    );
 }

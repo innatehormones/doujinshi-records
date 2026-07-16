@@ -51,6 +51,7 @@ export interface ConflictItem {
   id: number
   a_file_id: number
   a_title: string
+  a_cover_url: string | null
   b_filename: string
   b_file_path: string
   created_at: string

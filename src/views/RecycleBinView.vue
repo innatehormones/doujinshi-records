@@ -1,19 +1,30 @@
 <script setup lang="ts">
 import { onMounted, ref } from "vue"
 import { NSpin, NEmpty, NTag, NPagination, NButton, useMessage } from "naive-ui"
-import { useRecycleStore } from "@/stores"
+import { Image, Rows3 } from "@lucide/vue"
+import { useRecycleStore, useSettingsStore } from "@/stores"
 import PermanentDeleteDialog from "@/components/PermanentDeleteDialog.vue"
 import RestoreDialog from "@/components/RestoreDialog.vue"
 import type { FileSummary } from "@/types/api"
 
 const store = useRecycleStore()
+const settings = useSettingsStore()
 const message = useMessage()
 
 const target = ref<FileSummary | null>(null)
 const showDelete = ref(false)
 const showRestore = ref(false)
 
+/// 「待删除文件」列表的封面显示开关。FileSummary 自带 cover_url，
+/// 开启时把缩略图渲染到每条左侧。默认关——避免一上来全表 IO。
+const showCover = ref(false)
+
 onMounted(() => store.load())
+
+function coverSrc(f: FileSummary): string {
+  if (!f.cover_url) return ""
+  return settings.apiBase + f.cover_url
+}
 
 function askDelete(f: FileSummary) {
   target.value = f
@@ -73,9 +84,24 @@ function fmtSize(bytes: number): string {
         这里的文件已经移出已识别库，但仍占用硬盘空间。「永久删除」会把文件从硬盘移除；「还原」会让文件回到库内。两种操作都会保留数据记录。
       </p>
     </div>
-    <h2 class="text-subheading font-medium text-snow tracking-body">
-      待删除文件 ({{ store.presentTotal }})
-    </h2>
+    <div class="flex items-center gap-3">
+      <h2 class="text-subheading font-medium text-snow tracking-body">
+        待删除文件 ({{ store.presentTotal }})
+      </h2>
+      <button
+        class="cover-toggle"
+        :class="{ 'is-active': showCover }"
+        :aria-label="showCover ? '隐藏封面' : '显示封面'"
+        :title="showCover ? '隐藏封面' : '显示封面'"
+        @click="showCover = !showCover"
+      >
+        <component
+          :is="showCover ? Rows3 : Image"
+          :size="16"
+          :stroke-width="1.6"
+        />
+      </button>
+    </div>
     <n-spin :show="store.loading">
       <n-empty
         v-if="!store.loading && store.presentTotal === 0"
@@ -85,9 +111,17 @@ function fmtSize(bytes: number): string {
         <article
           v-for="f in store.present"
           :key="f.id"
-          v-memo="[f.id]"
+          v-memo="[f.id, showCover]"
           class="flex items-start gap-4 rounded-cards border border-border bg-card p-4"
         >
+          <img
+            v-if="showCover && f.cover_url"
+            :src="coverSrc(f)"
+            alt=""
+            loading="lazy"
+            class="size-16 shrink-0 rounded border border-border object-cover"
+          />
+          <div v-else-if="showCover" class="size-16 shrink-0" aria-hidden="true" />
           <div class="flex min-w-0 flex-1 flex-col gap-1.5">
             <div class="flex items-center gap-2">
               <n-tag size="small">回收</n-tag>
@@ -133,3 +167,29 @@ function fmtSize(bytes: number): string {
     />
   </div>
 </template>
+
+<style scoped>
+.cover-toggle {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--color-silver-mist);
+  cursor: pointer;
+  transition: color 0.15s, background-color 0.15s, border-color 0.15s;
+}
+.cover-toggle:hover {
+  color: var(--color-snow);
+  background: var(--color-ash);
+  border-color: var(--surface-border);
+}
+.cover-toggle.is-active {
+  color: var(--color-phosphor-green);
+  background: var(--color-forest-depth);
+  border-color: var(--surface-border);
+}
+</style>

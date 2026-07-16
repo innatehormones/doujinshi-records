@@ -3,11 +3,17 @@ import { onMounted, ref } from "vue"
 import {
   NTag, NSpace, NButton, NSpin, NEmpty, NAlert, NModal, NPagination,
 } from "naive-ui"
-import { useInboxStore } from "@/stores"
+import { Image, Rows3 } from "@lucide/vue"
+import { useInboxStore, useSettingsStore } from "@/stores"
 import type { RarErrorEntry, RarError } from "@/types/api"
 
 const store = useInboxStore()
+const settings = useSettingsStore()
 onMounted(() => store.load())
+
+/// 「待处理冲突」列表的封面显示开关。默认关——避免一上来 50 条全请求
+/// HTTP 拉图。B 端没封面，开了也只显示 A 端（B 还没入库）。
+const showCover = ref(false)
 
 const WINRAR_URL = "https://www.win-rar.com/"
 const SEVENZIP_URL = "https://www.7-zip.org/"
@@ -117,9 +123,24 @@ function rarErrorTitle(kind: RarError["kind"]): string {
       </n-alert>
     </div>
 
-    <h2 class="text-subheading font-medium text-snow tracking-body">
-      待处理冲突 ({{ store.total }})
-    </h2>
+    <div class="flex items-center gap-3">
+      <h2 class="text-subheading font-medium text-snow tracking-body">
+        待处理冲突 ({{ store.total }})
+      </h2>
+      <button
+        class="cover-toggle"
+        :class="{ 'is-active': showCover }"
+        :aria-label="showCover ? '隐藏封面' : '显示封面'"
+        :title="showCover ? '隐藏封面' : '显示封面'"
+        @click="showCover = !showCover"
+      >
+        <component
+          :is="showCover ? Rows3 : Image"
+          :size="16"
+          :stroke-width="1.6"
+        />
+      </button>
+    </div>
 
     <n-spin :show="store.loading">
       <n-empty
@@ -130,9 +151,17 @@ function rarErrorTitle(kind: RarError["kind"]): string {
         <article
           v-for="c in store.conflicts"
           :key="c.id"
-          v-memo="[c.id]"
+          v-memo="[c.id, showCover]"
           class="flex items-start gap-4 rounded-cards border border-border bg-card p-4"
         >
+          <img
+            v-if="showCover && c.a_cover_url"
+            :src="settings.apiBase + c.a_cover_url"
+            alt=""
+            loading="lazy"
+            class="size-16 shrink-0 rounded border border-border object-cover"
+          />
+          <div v-else-if="showCover" class="size-16 shrink-0" aria-hidden="true" />
           <div class="flex min-w-0 flex-1 flex-col gap-1.5">
             <div class="flex items-center gap-2">
               <n-tag size="small" type="warning">冲突</n-tag>
@@ -203,3 +232,29 @@ function rarErrorTitle(kind: RarError["kind"]): string {
     </n-modal>
   </div>
 </template>
+
+<style scoped>
+.cover-toggle {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--color-silver-mist);
+  cursor: pointer;
+  transition: color 0.15s, background-color 0.15s, border-color 0.15s;
+}
+.cover-toggle:hover {
+  color: var(--color-snow);
+  background: var(--color-ash);
+  border-color: var(--surface-border);
+}
+.cover-toggle.is-active {
+  color: var(--color-phosphor-green);
+  background: var(--color-forest-depth);
+  border-color: var(--surface-border);
+}
+</style>
