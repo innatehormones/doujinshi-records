@@ -31,6 +31,7 @@ export interface DirtyEntry {
   detected_dir: "identified" | "will_delete" | "archived"
   reason: string
   first_seen_at: string
+  resolved_at: string | null
 }
 
 export interface SettingsView {

@@ -11,6 +11,10 @@ pub struct Model {
     pub detected_dir: String,
     pub reason: String,
     pub first_seen_at: String,
+    /// 软删除戳 ——「重新入库」成功后写入（RFC3339）。`list_dirty` 过滤掉非 null
+    /// 行，scanner 也不会重写同 file_path 的活跃脏数据。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub resolved_at: Option<String>,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

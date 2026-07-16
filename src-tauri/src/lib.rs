@@ -218,6 +218,7 @@ pub async fn run(cfg: config::AppConfig, conn: DatabaseConnection) {
             commands::inbox::list_conflicts,
             commands::inbox::resolve_conflict,
             commands::dirty::list_dirty,
+            commands::dirty::reingest_dirty_entry,
             commands::settings::get_settings,
             commands::settings::get_scan_status,
             commands::settings::manual_scan,

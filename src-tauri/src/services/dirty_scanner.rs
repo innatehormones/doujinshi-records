@@ -78,6 +78,7 @@ async fn scan_dir(
 
         let exists = dirty_data::Entity::find()
             .filter(dirty_data::Column::FilePath.eq(&path))
+            .filter(dirty_data::Column::ResolvedAt.is_null())
             .one(conn)
             .await?;
         if exists.is_some() {
@@ -459,5 +460,50 @@ mod tests {
         let _ = scan(&conn, &identified, &will_delete, &archived).await.unwrap();
         let row = doujinshi_file::Entity::find().one(&conn).await.unwrap().unwrap();
         assert_eq!(row.file_state, "present");
+    }
+
+    /// 已 soft-resolve（resolved_at 已写）的脏数据行不阻挡下一次扫描写新行
+    /// ——该行已记账，不会再被重用为「已存在」的过滤条件。
+    #[tokio::test]
+    async fn scan_ignores_resolved_dirty_rows_for_dedup_check() {
+        let dir = tempfile::tempdir().unwrap();
+        let identified = dir.path().join("identified");
+        let will_delete = dir.path().join("will_delete");
+        let archived = dir.path().join("archived");
+        std::fs::create_dir_all(&identified).unwrap();
+        std::fs::create_dir_all(&will_delete).unwrap();
+        std::fs::create_dir_all(&archived).unwrap();
+        touch(&identified.join("orphan.zip"));
+
+        let conn = open_db(dir.path()).await;
+        // 第一轮：写一条 dirty_data 行，并把 resolved_at 直接填上模拟「已软删」。
+        let path_str = identified.join("orphan.zip").to_string_lossy().into_owned();
+        let now = chrono::Utc::now().to_rfc3339();
+        let am = dirty_data::ActiveModel {
+            file_path: Set(path_str.clone()),
+            file_size: Set(1),
+            detected_dir: Set("identified".into()),
+            reason: Set("orphan_file".into()),
+            first_seen_at: Set(now),
+            resolved_at: Set(Some(chrono::Utc::now().to_rfc3339())),
+            ..Default::default()
+        };
+        am.insert(&conn).await.unwrap();
+
+        // 把文件移走再放回来（模拟「重新入库」后被 mv）—— scanner 不该被 resolved 行
+        // 阻挡、再写一条 orphan_file 脏数据。
+        std::fs::remove_file(identified.join("orphan.zip")).unwrap();
+        touch(&identified.join("orphan.zip"));
+
+        let report = scan(&conn, &identified, &will_delete, &archived).await.unwrap();
+
+        // 不应被旧 resolved 行 skip → orphan 被检测并写新 dirty_data
+        assert_eq!(report.orphans, 1);
+        let rows = dirty_data::Entity::find().all(&conn).await.unwrap();
+        // 老的 resolved 行 + 新写的未 resolved 行 = 2 条
+        assert_eq!(rows.len(), 2, "resolved 行不应阻挡新 orphan 写入");
+        let unresolved: Vec<_> =
+            rows.iter().filter(|r| r.resolved_at.is_none()).collect();
+        assert_eq!(unresolved.len(), 1);
     }
 }

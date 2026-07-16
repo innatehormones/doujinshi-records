@@ -394,10 +394,16 @@ async fn finalize_identification(
     };
     std::fs::create_dir_all(identified_dir)?;
     let new_path = identified_dir.join(&move_filename);
-    if new_path.exists() {
+    // Self-rename (new_path == file_path) happens when the caller is
+    // re-ingesting an orphan already sitting in identified_dir —
+    // skip the exists check (it's the same file) and the rename (no-op).
+    let is_self_rename = new_path == file_path;
+    if !is_self_rename && new_path.exists() {
         return Ok(IdentifyOutcome::Error("target exists with different hash".into()));
     }
-    std::fs::rename(file_path, &new_path)?;
+    if !is_self_rename {
+        std::fs::rename(file_path, &new_path)?;
+    }
 
     let now = chrono::Utc::now();
     let am = doujinshi_file::ActiveModel {

@@ -331,7 +331,15 @@ export const useDirtyStore = defineStore("dirty", () => {
     await load()
   }
 
-  return { entries, total, page, totalPages, showPager, loading, load, gotoPage }
+  /// 重新入库一条 orphan_file 脏数据条目。后端调 identifier::identify_file
+  /// 走完整入库流程，成功后 soft-resolve 该条脏数据行（resolved_at）。失败由调用方
+  /// 通过 message.error 上报。
+  async function reingest(id: number) {
+    await api.reingestDirtyEntry(id, false)
+    await load()
+  }
+
+  return { entries, total, page, totalPages, showPager, loading, load, gotoPage, reingest }
 })
 
 export const useInboxStore = defineStore("inbox", () => {

@@ -111,7 +111,7 @@ pub async fn init_schema(conn: &DatabaseConnection) -> Result<()> {
 // never edit an existing one. Each entry must be idempotent because
 // `init_schema_versioned` may be replayed against an already-upgraded DB.
 
-pub const CURRENT_VERSION: i64 = 9;
+pub const CURRENT_VERSION: i64 = 10;
 
 /// (version, human-readable name, body of the migration SQL to apply when
 /// moving from `version - 1` to `version`). Each migration must guard itself
@@ -201,6 +201,15 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         // 要求该列无索引引用——version_tag 从来没有过索引，直接掉。
         "ALTER TABLE doujinshi_file DROP COLUMN version_tag",
     ),
+    (
+        10,
+        "add dirty_data.resolved_at for soft-resolve",
+        // 脏数据页「重新入库」按钮落地后写入 resolved_at = NOW()，让该行
+        // 从 list_dirty 过滤掉、scanner 也不会再把它当作活跃状态去重写。
+        // 软删除（不 DELETE）是有意的——历史 dirty row 仍可在 SQL 查询里追溯。
+        // apply_migration 的 ALTER TABLE ADD COLUMN 走 pragma_table_info 幂等检查。
+        "ALTER TABLE dirty_data ADD COLUMN resolved_at TEXT",
+    ),
 ];
 
 pub async fn init_schema_versioned(conn: &DatabaseConnection) -> Result<()> {
@@ -284,6 +293,22 @@ async fn apply_migration(conn: &DatabaseConnection, version: i64, body: &str) ->
                     ))
                     .await?;
                 if rows.is_empty() {
+                    // 表不存在时 ALTER TABLE 会因 "no such table" 失败。
+                    // 但 v5 之前的库不应跑 v10（v10 总是跟在 v5 之后）；
+                    // v5+ 库到 v10 时 dirty_data 已经被 v5 CREATE 出来。
+                    // 这条 guard 让"停在 v3 / v4 的人工测试"也能继续往下跑 v10。
+                    let tbl_rows: Vec<QueryResult> = conn
+                        .query_all(Statement::from_string(
+                            backend.clone(),
+                            format!(
+                                "SELECT name FROM sqlite_master WHERE type='table' AND name='{}'",
+                                table
+                            ),
+                        ))
+                        .await?;
+                    if tbl_rows.is_empty() {
+                        return Ok(());
+                    }
                     conn.execute(Statement::from_string(backend, body.to_string()))
                         .await?;
                 }
