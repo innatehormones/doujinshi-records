@@ -171,15 +171,17 @@ function fmtSize(bytes: number): string {
             锁定端口 = 启动时尝试绑定；占用时按 100/200/300ms 重试 3 次后回退随机端口。关闭锁定 = 由操作系统分配空闲端口。
           </p>
           <div class="settings-card-controls">
-            <n-input-number
-              v-model:value="portInput"
-              :min="0" :max="65535" :disabled="!portLocked"
-              placeholder="0 = 随机" class="w-[140px]"
-            />
-            <n-switch v-model:value="portLocked" />
-            <span class="text-caption text-silver-mist">
-              {{ portLocked ? "固定端口" : "随机端口" }}
-            </span>
+            <div class="control-row">
+              <n-input-number
+                v-model:value="portInput"
+                :min="0" :max="65535" :disabled="!portLocked"
+                placeholder="0 = 随机" class="w-[140px]"
+              />
+              <n-switch v-model:value="portLocked" />
+              <span class="text-caption text-silver-mist">
+                {{ portLocked ? "固定端口" : "随机端口" }}
+              </span>
+            </div>
           </div>
           <div class="settings-card-actions">
             <n-button type="primary" size="small" @click="savePort">
@@ -200,16 +202,16 @@ function fmtSize(bytes: number): string {
             浏览器扩展或外部脚本调用 HTTP API 时在 <code>Authorization: Bearer &lt;token&gt;</code> 头里带这个值。重新生成后旧 Token 立刻失效。
           </p>
           <div class="settings-card-controls">
-            <n-code
-              :code="store.data?.auth_token ?? ''"
-              class="min-w-0 flex-1 overflow-x-auto"
-            />
+            <div class="token-display">
+              <span class="token-label">Token</span>
+              <code class="token-value">{{ store.data?.auth_token ?? '' }}</code>
+              <n-button size="tiny" @click="copy(store.data?.auth_token ?? '')">
+                <template #icon><ClipboardCopy :size="12" :stroke-width="1.8" /></template>
+                复制
+              </n-button>
+            </div>
           </div>
           <div class="settings-card-actions">
-            <n-button size="small" @click="copy(store.data?.auth_token ?? '')">
-              <template #icon><ClipboardCopy :size="13" :stroke-width="1.8" /></template>
-              复制
-            </n-button>
             <n-popconfirm @positive-click="regenToken">
               <template #trigger>
                 <n-button size="small" type="warning">
@@ -497,6 +499,33 @@ function fmtSize(bytes: number): string {
 .control-input {
   flex: 1;
   min-width: 0;
+}
+
+/* ===== Token display ===== */
+.token-display {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+  background: var(--color-obsidian-deep);
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+}
+.token-label {
+  font-size: var(--text-caption);
+  color: var(--color-smoke);
+  white-space: nowrap;
+}
+.token-value {
+  flex: 1;
+  min-width: 0;
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-snow);
+  overflow-x: auto;
+  white-space: nowrap;
+  padding: 0;
+  background: transparent;
 }
 
 /* ===== Path list ===== */
