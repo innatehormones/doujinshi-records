@@ -5,10 +5,13 @@
 //! `cargo test --test <file>` 走独立二进制可正常跑，所以把测试统一放这里。
 //! 待 DLL 问题排查清楚后可迁回 src/。
 
+use doujinshi_records::db;
 use doujinshi_records::services::backup::{
     backup_filename, clear_restore_marker, hash_db_file, read_restore_marker, write_restore_marker,
-    BackupConfig, BackupService, BackupStorage, LocalFsStorage, RestorePending, SettingsHandle,
+    BackupConfig, BackupService, BackupStorage, DbSettingsHandle, LocalFsStorage, RestorePending,
+    SettingsHandle,
 };
+use sea_orm::{ActiveModelTrait, EntityTrait, Set};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex as StdMutex};
 
@@ -233,4 +236,57 @@ async fn list_backups_returns_sorted_snapshots() {
     for s in &list {
         assert!(s.size_bytes > 0);
     }
+}
+
+/// 测试 helper：建一个真 SQLite + 真 DbSettingsHandle 拼的 BackupService。
+async fn make_svc_with_db(tmp: &std::path::Path) -> BackupService {
+    use std::path::PathBuf;
+    let conn = db::connect(&tmp.join("data.db")).await.unwrap();
+    db::migrations::init_schema_versioned(&conn).await.unwrap();
+    BackupService::new_with_db(
+        PathBuf::from(tmp.join("data.db")),
+        PathBuf::from(tmp.join("backups")),
+        Arc::new(conn),
+    )
+}
+
+#[tokio::test]
+async fn backup_now_writes_via_vacuum_into() {
+    let dir = tempfile::tempdir().unwrap();
+    let svc = make_svc_with_db(dir.path()).await;
+
+    let result = svc.backup_now().await.unwrap();
+    assert!(result.path.exists(), "backup file should exist");
+    assert!(result.size_bytes > 0);
+
+    // 验证备份文件是有效 SQLite
+    let backup_conn = db::connect(&result.path).await.unwrap();
+    use doujinshi_records::db::entities::doujinshi_file;
+    let rows = doujinshi_file::Entity::find().all(&backup_conn).await.unwrap();
+    assert_eq!(rows.len(), 0); // 新 DB 无数据
+}
+
+#[tokio::test]
+async fn backup_now_atomic_no_half_files_on_failure() {
+    let dir = tempfile::tempdir().unwrap();
+    let backup_dir = dir.path().join("backups");
+    std::fs::create_dir_all(&backup_dir).unwrap();
+
+    // db_path 指向不存在的文件——VACUUM INTO 会失败
+    let svc = BackupService::new(
+        dir.path().join("nonexistent.db"),
+        backup_dir.clone(),
+        Arc::new(LocalFsStorage),
+        Arc::new(FakeSettings::new()),
+    );
+
+    let result = svc.backup_now().await;
+    assert!(result.is_err());
+
+    // 备份目录不应残留 .tmp-* 或半截 .db
+    let entries: Vec<_> = std::fs::read_dir(&backup_dir)
+        .unwrap()
+        .filter_map(Result::ok)
+        .collect();
+    assert!(entries.is_empty(), "no half-files should remain");
 }
