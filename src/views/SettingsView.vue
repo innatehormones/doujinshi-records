@@ -4,7 +4,7 @@ import {
   NButton, NTag, NSpin, useMessage, NCode,
   NInputNumber, NSwitch, NInput, NPopconfirm, NTooltip,
 } from "naive-ui"
-import { RefreshCw, ClipboardCopy, RotateCw, Play, Save, Trash2 } from "@lucide/vue"
+import { RefreshCw, ClipboardCopy, RotateCw, Play, Save, Trash2, FolderOpen } from "@lucide/vue"
 import { useSettingsStore } from "@/stores"
 import { api } from "@/api/tauri"
 import type { BackupConfig, BackupSnapshot } from "@/types/api"
@@ -69,6 +69,16 @@ async function copy(text: string) {
     message.success("已复制")
   } catch {
     message.error("剪贴板不可用")
+  }
+}
+
+/// 「资源目录」列表每行的「打开」按钮：调后端 spawn explorer.exe。
+/// fire-and-forget——explorer.exe 的退出码不关心，UI 不阻塞。
+async function openDir(path: string) {
+  try {
+    await api.openPath(path)
+  } catch (e) {
+    message.error(`打开失败：${e}`)
   }
 }
 
@@ -314,6 +324,14 @@ function fmtMtime(iso: string): string {
               ]" :key="row.label" class="path-row">
                 <span class="path-key">{{ row.label }}</span>
                 <n-code :code="row.value" class="path-value" />
+                <button
+                  class="path-act"
+                  :title="`在文件管理器中打开 ${row.value}`"
+                  :aria-label="`打开 ${row.label}`"
+                  @click="openDir(row.value)"
+                >
+                  <FolderOpen :size="14" :stroke-width="1.6" />
+                </button>
               </li>
             </ul>
           </n-spin>
@@ -573,7 +591,7 @@ function fmtMtime(iso: string): string {
 }
 .path-row {
   display: grid;
-  grid-template-columns: 96px 1fr;
+  grid-template-columns: 96px 1fr auto;
   align-items: center;
   gap: 12px;
 }
@@ -586,6 +604,24 @@ function fmtMtime(iso: string): string {
   color: var(--color-snow);
   overflow-x: auto;
   white-space: nowrap;
+}
+.path-act {
+  width: 28px;
+  height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--color-silver-mist);
+  cursor: pointer;
+  transition: color 0.15s, background-color 0.15s, border-color 0.15s;
+}
+.path-act:hover {
+  color: var(--color-snow);
+  background: var(--color-ash);
+  border-color: var(--surface-border);
 }
 
 /* ===== Snapshot list ===== */

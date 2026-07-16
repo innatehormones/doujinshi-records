@@ -54,6 +54,7 @@ export const api = {
   getScanStatus: () => invoke<ScanStatus>("get_scan_status"),
   regenerateAuthToken: () => invoke<string>("regenerate_auth_token"),
   setHttpPort: (port: number) => invoke<void>("set_http_port", { port }),
+  openPath: (path: string) => invoke<void>("open_path", { path }),
   forceExtract: (path: string) => invoke<void>("force_extract", { path }),
   getBackupConfig: () => invoke<BackupConfig>("get_backup_config"),
   setBackupConfig: (dir: string | null, retentionCount: number) =>

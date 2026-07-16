@@ -90,3 +90,35 @@ pub async fn set_http_port(state: State<'_, AppState>, port: u16) -> AppResult<(
     db::write_setting(&state.conn, "api_port", &port.to_string()).await?;
     Ok(())
 }
+
+/// 在系统文件管理器中打开一个目录（Windows 走 `explorer.exe`）。
+/// Settings 页「资源目录」列表每行的「打开」按钮用——避免用户在 app
+/// 内只能复制路径、切到 Explorer 自己粘贴。火并忘（fire-and-forget）：
+/// spawn 完直接返回，explorer.exe 的退出码不关心。
+#[tauri::command]
+pub async fn open_path(path: String) -> AppResult<()> {
+    let p = std::path::PathBuf::from(&path);
+    if !p.exists() {
+        return Err(crate::error::AppError::Other(format!(
+            "路径不存在：{path}"
+        )));
+    }
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer.exe")
+            .arg(&path)
+            .spawn()
+            .map_err(|e| crate::error::AppError::Other(format!("explorer.exe 启动失败：{e}")))?;
+        return Ok(());
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        // 项目实际是 Windows-only，但留个非 Windows 兜底方便开发机
+        // 跨平台编译 / 单测跑通——xdg-open / open 都能处理目录。
+        std::process::Command::new(if cfg!(target_os = "macos") { "open" } else { "xdg-open" })
+            .arg(&path)
+            .spawn()
+            .map_err(|e| crate::error::AppError::Other(format!("open 启动失败：{e}")))?;
+        Ok(())
+    }
+}

@@ -224,6 +224,7 @@ pub async fn run(cfg: config::AppConfig, conn: DatabaseConnection) {
             commands::settings::manual_scan,
             commands::settings::regenerate_auth_token,
             commands::settings::set_http_port,
+            commands::settings::open_path,
             commands::backup::get_backup_config,
             commands::backup::set_backup_config,
             commands::backup::list_backups,
