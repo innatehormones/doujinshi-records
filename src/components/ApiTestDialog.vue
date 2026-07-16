@@ -177,7 +177,7 @@ const statusKind = computed(() => {
   <n-modal
     :show="show"
     preset="card"
-    style="width: 880px; max-width: calc(100vw - 32px);"
+    style="width: 720px; max-width: calc(100vw - 32px);"
     :on-update-show="(v: boolean) => emit('update:show', v)"
     :mask-closable="true"
   >
@@ -284,14 +284,9 @@ const statusKind = computed(() => {
 }
 
 .dialog-body {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
+  display: flex;
+  flex-direction: column;
   gap: 16px;
-  align-items: stretch;
-  min-height: 420px;
-}
-@media (max-width: 800px) {
-  .dialog-body { grid-template-columns: 1fr; }
 }
 
 .dialog-pane {
@@ -345,8 +340,6 @@ const statusKind = computed(() => {
   display: flex;
   flex-direction: column;
   gap: 6px;
-  flex: 1;
-  min-height: 0;
 }
 .curl-head {
   display: flex;
@@ -358,13 +351,8 @@ const statusKind = computed(() => {
   font-size: 11px;
   color: var(--color-smoke);
 }
-.curl-code {
-  flex: 1;
-  min-height: 0;
-}
 .curl-code :deep(pre) {
-  height: 100%;
-  max-height: 100%;
+  max-height: 220px;
   overflow: auto;
   margin: 0;
 }
@@ -391,7 +379,6 @@ const statusKind = computed(() => {
   flex-direction: column;
   gap: 8px;
   min-width: 0;
-  flex: 1;
 }
 .response-meta {
   display: flex;
@@ -427,13 +414,8 @@ const statusKind = computed(() => {
   overflow-x: auto;
   white-space: nowrap;
 }
-.response-body {
-  flex: 1;
-  min-height: 0;
-}
 .response-body :deep(pre) {
-  height: 100%;
-  max-height: 100%;
+  max-height: 360px;
   overflow: auto;
   margin: 0;
 }
