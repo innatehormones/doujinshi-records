@@ -131,16 +131,14 @@ async function deleteSnap(snap: BackupSnapshot) {
   }
 }
 
-/// HTTP API 路由表——三栏对齐（METHOD / PATH / 描述）显示。
-/// auth-required 字段在「描述」里用「需 Token」注明（除 health 外都需要）。
 const apiRoutes = computed(() => [
-  { method: "GET",    path: "/api/health",                          note: "健康检查（无需 Token）" },
-  { method: "GET",    path: "/api/doujinshi/search?q=...",           note: "标题/社团/文件名模糊搜索（需 Token）" },
-  { method: "GET",    path: "/api/doujinshi/check?hash=<blake3>",   note: "检查哈希是否在库（需 Token）" },
-  { method: "GET",    path: "/api/doujinshi/by-hash/<hash>",         note: "按哈希查询（需 Token）" },
-  { method: "GET",    path: "/api/doujinshi/<id>",                   note: "按 ID 查询（需 Token）" },
-  { method: "GET",    path: "/api/covers/by-hash/<hash>",            note: "按哈希取封面（需 Token）" },
-  { method: "GET",    path: "/api/covers/<file_id>",                 note: "按 ID 取封面（需 Token）" },
+  { method: "GET", path: "/api/health",                        note: "健康检查（无需 Token）" },
+  { method: "GET", path: "/api/doujinshi/search?q=...",        note: "标题/社团/文件名模糊搜索（需 Token）" },
+  { method: "GET", path: "/api/doujinshi/check?hash=<blake3>",note: "检查哈希是否在库（需 Token）" },
+  { method: "GET", path: "/api/doujinshi/by-hash/<hash>",      note: "按哈希查询（需 Token）" },
+  { method: "GET", path: "/api/doujinshi/<id>",                note: "按 ID 查询（需 Token）" },
+  { method: "GET", path: "/api/covers/by-hash/<hash>",         note: "按哈希取封面（需 Token）" },
+  { method: "GET", path: "/api/covers/<file_id>",              note: "按 ID 取封面（需 Token）" },
 ])
 
 function fmtSize(bytes: number): string {
@@ -159,14 +157,9 @@ function fmtSize(bytes: number): string {
 
     <!-- ==================== 运行时 ==================== -->
     <section class="settings-section">
-      <div class="section-eyebrow">
-        <span class="section-tick" />
-        <span class="section-label">运行时</span>
-        <span class="section-rule" />
-      </div>
+      <h2 class="text-subheading font-medium text-snow tracking-body">运行时</h2>
 
-      <article class="settings-card settings-card--ops">
-        <div class="settings-card-rail" />
+      <article class="settings-card">
         <div class="settings-card-body">
           <header class="settings-card-head">
             <h3 class="settings-card-title">HTTP 端口</h3>
@@ -188,22 +181,20 @@ function fmtSize(bytes: number): string {
               {{ portLocked ? "固定端口" : "随机端口" }}
             </span>
           </div>
-          <footer class="settings-card-actions">
+          <div class="settings-card-actions">
             <n-button type="primary" size="small" @click="savePort">
               <template #icon><Save :size="13" :stroke-width="1.8" /></template>
               保存
             </n-button>
             <n-tag size="small" type="warning">重启后生效</n-tag>
-          </footer>
+          </div>
         </div>
       </article>
 
-      <article class="settings-card settings-card--ops">
-        <div class="settings-card-rail" />
+      <article class="settings-card">
         <div class="settings-card-body">
           <header class="settings-card-head">
             <h3 class="settings-card-title">HTTP Token</h3>
-            <n-tag size="small">本地 API 鉴权</n-tag>
           </header>
           <p class="settings-card-desc">
             浏览器扩展或外部脚本调用 HTTP API 时在 <code>Authorization: Bearer &lt;token&gt;</code> 头里带这个值。重新生成后旧 Token 立刻失效。
@@ -214,7 +205,7 @@ function fmtSize(bytes: number): string {
               class="min-w-0 flex-1 overflow-x-auto"
             />
           </div>
-          <footer class="settings-card-actions">
+          <div class="settings-card-actions">
             <n-button size="small" @click="copy(store.data?.auth_token ?? '')">
               <template #icon><ClipboardCopy :size="13" :stroke-width="1.8" /></template>
               复制
@@ -228,16 +219,14 @@ function fmtSize(bytes: number): string {
               </template>
               重新生成 Token 后旧值立刻失效，确认继续？
             </n-popconfirm>
-          </footer>
+          </div>
         </div>
       </article>
 
-      <article class="settings-card settings-card--ops">
-        <div class="settings-card-rail" />
+      <article class="settings-card">
         <div class="settings-card-body">
           <header class="settings-card-head">
             <h3 class="settings-card-title">Inbox 目录</h3>
-            <n-tag size="small" type="info">自动入库</n-tag>
           </header>
           <p class="settings-card-desc">
             把压缩包拖到这里，应用会监听并自动处理（hash 去重 / 抽封面 / 入库）。撞名压缩包会留在 Inbox 等用户在「入库冲突处理」页解决。
@@ -245,17 +234,16 @@ function fmtSize(bytes: number): string {
           <div class="settings-card-controls">
             <n-input :value="store.data?.inbox_dir ?? ''" readonly />
           </div>
-          <footer class="settings-card-actions">
+          <div class="settings-card-actions">
             <n-button size="small" @click="copy(store.data?.inbox_dir ?? '')">
               <template #icon><ClipboardCopy :size="13" :stroke-width="1.8" /></template>
               复制路径
             </n-button>
-          </footer>
+          </div>
         </div>
       </article>
 
-      <article class="settings-card settings-card--ops">
-        <div class="settings-card-rail" />
+      <article class="settings-card">
         <div class="settings-card-body">
           <header class="settings-card-head">
             <h3 class="settings-card-title">手动扫描</h3>
@@ -264,28 +252,23 @@ function fmtSize(bytes: number): string {
             </n-tag>
           </header>
           <p class="settings-card-desc">
-            后台已监听 <code>resources/doujinshi/</code> 顶层文件变化（2 秒防抖）。如果怀疑漏掉了某个文件，用「手动扫描」立即跑一遍。
+            后台已监听 <code>resources/doujinshi/</code> 顶层文件变化（2 秒防抖）。如果怀疑漏掉了某个文件，用「立即扫描」跑一遍。
           </p>
-          <footer class="settings-card-actions">
+          <div class="settings-card-actions">
             <n-button type="primary" :loading="scanning" @click="runScan">
               <template #icon><Play :size="13" :stroke-width="1.8" /></template>
               立即扫描
             </n-button>
-          </footer>
+          </div>
         </div>
       </article>
     </section>
 
     <!-- ==================== 数据 ==================== -->
     <section class="settings-section">
-      <div class="section-eyebrow">
-        <span class="section-tick section-tick--data" />
-        <span class="section-label">数据</span>
-        <span class="section-rule" />
-      </div>
+      <h2 class="text-subheading font-medium text-snow tracking-body">数据</h2>
 
-      <article class="settings-card settings-card--data">
-        <div class="settings-card-rail" />
+      <article class="settings-card">
         <div class="settings-card-body">
           <header class="settings-card-head">
             <h3 class="settings-card-title">资源目录</h3>
@@ -295,7 +278,7 @@ function fmtSize(bytes: number): string {
             </n-button>
           </header>
           <p class="settings-card-desc">
-            应用运行时数据根目录。所有 4 个数据目录（Inbox / 已识别 / 待删除 / 归档）都在它下面。
+            应用运行时数据根目录。所有 4 个数据目录（Inbox / 已识别 / 文件回收站 / 归档）都在它下面。
           </p>
           <n-spin :show="!store.data">
             <ul v-if="store.data" class="path-list">
@@ -314,8 +297,7 @@ function fmtSize(bytes: number): string {
         </div>
       </article>
 
-      <article class="settings-card settings-card--data">
-        <div class="settings-card-rail" />
+      <article class="settings-card">
         <div class="settings-card-body">
           <header class="settings-card-head">
             <h3 class="settings-card-title">数据备份</h3>
@@ -327,16 +309,16 @@ function fmtSize(bytes: number): string {
             仅备份 <code>data.db</code>（不含压缩文件）。目录留空 = 默认 <code>resources/backups/</code>。内容未变时自动跳过；启动期超过 24h 没成功备份会自动补一次。
           </p>
           <div class="settings-card-controls">
-            <div class="control-grid">
-              <label class="control-label">备份目录</label>
+            <div class="control-row">
+              <span class="control-label">备份目录</span>
               <n-input
                 v-model:value="backupDirInput"
                 placeholder="默认 resources/backups/"
                 class="control-input"
               />
             </div>
-            <div class="control-grid">
-              <label class="control-label">保留最近</label>
+            <div class="control-row">
+              <span class="control-label">保留最近</span>
               <n-input-number
                 v-model:value="retentionInput" :min="0" :max="999"
                 placeholder="0 = 不限" class="w-[140px]"
@@ -344,7 +326,7 @@ function fmtSize(bytes: number): string {
               <span class="text-caption text-silver-mist">个快照（0 = 不限）</span>
             </div>
           </div>
-          <footer class="settings-card-actions">
+          <div class="settings-card-actions">
             <n-button type="primary" size="small" @click="saveBackupConfig">
               <template #icon><Save :size="13" :stroke-width="1.8" /></template>
               保存
@@ -358,7 +340,7 @@ function fmtSize(bytes: number): string {
               </template>
               立即执行一次数据库备份？耗时几秒。
             </n-popconfirm>
-          </footer>
+          </div>
 
           <div v-if="snapshots.length > 0" class="snapshot-list">
             <header class="snapshot-head">
@@ -397,18 +379,12 @@ function fmtSize(bytes: number): string {
 
     <!-- ==================== 外部集成 ==================== -->
     <section class="settings-section">
-      <div class="section-eyebrow">
-        <span class="section-tick section-tick--api" />
-        <span class="section-label">外部集成</span>
-        <span class="section-rule" />
-      </div>
+      <h2 class="text-subheading font-medium text-snow tracking-body">外部集成</h2>
 
-      <article class="settings-card settings-card--api">
-        <div class="settings-card-rail" />
+      <article class="settings-card">
         <div class="settings-card-body">
           <header class="settings-card-head">
             <h3 class="settings-card-title">HTTP API</h3>
-            <n-tag size="small" type="info">本地 127.0.0.1</n-tag>
           </header>
           <p class="settings-card-desc">
             应用在 127.0.0.1 暴露本地 HTTP API，给浏览器扩展、脚本等外部工具查询本库。除 <code>/api/health</code> 外所有路由都需要 <code>Authorization: Bearer &lt;token&gt;</code> 鉴权（见上方「HTTP Token」）。
@@ -433,12 +409,8 @@ function fmtSize(bytes: number): string {
             </thead>
             <tbody>
               <tr v-for="r in apiRoutes" :key="r.path">
-                <td class="col-method">
-                  <span class="method-tag" :data-method="r.method">{{ r.method }}</span>
-                </td>
-                <td class="col-path">
-                  <code class="api-path">{{ r.path }}</code>
-                </td>
+                <td class="col-method"><span class="method">{{ r.method }}</span></td>
+                <td class="col-path"><code class="api-path">{{ r.path }}</code></td>
                 <td class="col-note">{{ r.note }}</td>
               </tr>
             </tbody>
@@ -450,54 +422,23 @@ function fmtSize(bytes: number): string {
 </template>
 
 <style scoped>
-/* ===== Section eyebrow ===== */
-.section-eyebrow {
+/* ===== Section ===== */
+.settings-page {
+  gap: var(--spacing-32);
+}
+.settings-section {
   display: flex;
-  align-items: center;
-  gap: 12px;
-  margin-top: 8px;
-}
-.section-tick {
-  width: 12px;
-  height: 2px;
-  background: var(--color-phosphor-green);
-  display: inline-block;
-}
-.section-tick--data { background: var(--color-archive-blue); }
-.section-tick--api { background: #a78bfa; }
-.section-label {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.18em;
-  text-transform: uppercase;
-  color: var(--color-snow);
-}
-.section-rule {
-  flex: 1;
-  height: 1px;
-  background: var(--surface-border);
+  flex-direction: column;
+  gap: var(--spacing-16);
 }
 
-/* ===== Settings card ===== */
+/* ===== Card ===== */
 .settings-card {
-  position: relative;
   background: var(--surface-card);
   border: 1px solid var(--surface-border);
   border-radius: var(--radius-cards);
-  display: flex;
-  overflow: hidden;
 }
-.settings-card-rail {
-  width: 4px;
-  flex-shrink: 0;
-  background: var(--color-phosphor-green);
-}
-.settings-card--data .settings-card-rail { background: var(--color-archive-blue); }
-.settings-card--api  .settings-card-rail { background: #a78bfa; }
-
 .settings-card-body {
-  flex: 1;
-  min-width: 0;
   padding: 20px 24px;
   display: flex;
   flex-direction: column;
@@ -510,14 +451,14 @@ function fmtSize(bytes: number): string {
   gap: 12px;
 }
 .settings-card-title {
-  font-size: 16px;
+  font-size: var(--text-subheading);
   font-weight: 500;
   color: var(--color-snow);
   letter-spacing: var(--tracking-body);
   margin: 0;
 }
 .settings-card-desc {
-  font-size: 12px;
+  font-size: var(--text-caption);
   line-height: 1.55;
   color: var(--color-silver-mist);
   margin: 0;
@@ -539,21 +480,17 @@ function fmtSize(bytes: number): string {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding-top: 8px;
-  border-top: 1px dashed var(--surface-border);
+  padding-top: 4px;
 }
 
-/* ===== Control grid ===== */
-.control-grid {
+/* ===== Control row ===== */
+.control-row {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 12px;
 }
 .control-label {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  font-size: var(--text-caption);
   color: var(--color-smoke);
   min-width: 64px;
 }
@@ -566,7 +503,7 @@ function fmtSize(bytes: number): string {
 .path-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 6px;
   margin: 0;
   padding: 0;
   list-style: none;
@@ -576,16 +513,10 @@ function fmtSize(bytes: number): string {
   grid-template-columns: 96px 1fr;
   align-items: center;
   gap: 12px;
-  padding: 6px 0;
-  border-bottom: 1px dashed var(--surface-border);
 }
-.path-row:last-child { border-bottom: none; }
 .path-key {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.1em;
+  font-size: var(--text-caption);
   color: var(--color-smoke);
-  text-transform: uppercase;
 }
 .path-value {
   font-size: 12px;
@@ -596,7 +527,7 @@ function fmtSize(bytes: number): string {
 
 /* ===== Snapshot list ===== */
 .snapshot-list {
-  margin-top: 8px;
+  margin-top: 4px;
   border: 1px solid var(--surface-border);
   border-radius: 10px;
   overflow: hidden;
@@ -614,10 +545,7 @@ function fmtSize(bytes: number): string {
   border-bottom: 1px solid var(--surface-border);
 }
 .snapshot-head > span {
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
+  font-size: 11px;
   color: var(--color-smoke);
 }
 .snapshot-body {
@@ -647,10 +575,7 @@ function fmtSize(bytes: number): string {
   border-radius: 8px;
 }
 .api-base-label {
-  font-family: var(--font-mono);
-  font-size: 11px;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
+  font-size: var(--text-caption);
   color: var(--color-smoke);
   white-space: nowrap;
 }
@@ -674,10 +599,7 @@ function fmtSize(bytes: number): string {
 }
 .api-table th {
   background: var(--color-ash);
-  font-family: var(--font-mono);
-  font-size: 10px;
-  letter-spacing: 0.15em;
-  text-transform: uppercase;
+  font-size: 11px;
   color: var(--color-smoke);
   font-weight: 500;
 }
@@ -688,19 +610,13 @@ function fmtSize(bytes: number): string {
 .col-path   { width: 320px; }
 .col-note   { color: var(--color-silver-mist); }
 
-.method-tag {
-  display: inline-block;
+.method {
   font-family: var(--font-mono);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 500;
-  letter-spacing: 0.08em;
-  padding: 2px 6px;
-  border-radius: 4px;
-  background: var(--color-forest-depth);
-  color: var(--color-phosphor-green);
+  letter-spacing: 0.05em;
+  color: var(--color-snow);
 }
-.method-tag[data-method="POST"] { background: #2e1f4b; color: #c4b5fd; }
-
 .api-path {
   font-family: var(--font-mono);
   font-size: 12px;
