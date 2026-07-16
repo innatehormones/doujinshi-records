@@ -1,7 +1,6 @@
 use crate::db::entities::dirty_data;
 use crate::error::{AppError, AppResult};
 use crate::models::Page;
-use crate::services::identifier;
 use crate::AppState;
 use sea_orm::{ActiveModelTrait, ColumnTrait, EntityTrait, PaginatorTrait, QueryFilter, QuerySelect, Set};
 use std::path::PathBuf;
@@ -28,21 +27,25 @@ pub async fn list_dirty(
 }
 
 /// 重新入库脏数据条目 —— 仅适用 `reason="orphan_file"`（目录里有文件但 DB
-/// 没有对应行）。把该文件交给 `identifier::identify_file` 跑完整入库流程：
-/// BLAKE3 命中已存在行 → reactivate；不命中 → 新 row；撞名 → 写 conflict。
-/// 不论哪种 outcome，最终都打 `resolved_at` 软删这一条 dirty_data 行。
+/// 没有对应行）。**Mover-only**：只把文件从 `detected_dir` 搬到 `inbox_dir`，
+/// 写 `resolved_at` 软删这一条 dirty_data 行。
 ///
-/// `skip_size_gate`：对应 RAR 大小豁免，跟 scanner 走同一套；UI 默认 false，
-/// 大文件场景可由 `forceExtract` 路径手动开。
+/// 完整的入库流程（BLAKE3 命中 reactivate / 不命中新建 / 撞名写 conflict）
+/// 由已经在跑的 `scanner::Scanner` notify watcher 接管，2s 防抖后异步处理。
+/// UI 因此立即返回，不阻塞 hash + 抽封面。
+///
+/// 错误反馈：
+/// - 文件已不存在 → error 透出 + dirty 行不动
+/// - inbox 已有同名 → error 拒绝（避免静默覆盖） + dirty 行不动
+/// - scanner 跑失败（rar 抽封面失败、撞名等）由 `rar-error` 事件 +
+///   `ConflictView` 兜底
 ///
 /// 拆 inner 是为了避开 Tauri runtime 依赖 —— 测试可直接调 inner，无需拉
 /// AppState / Scanner / wry-tao 整套 GUI stack。
 pub async fn reingest_dirty_entry_inner(
     conn: &sea_orm::DatabaseConnection,
-    covers_dir: &std::path::Path,
-    identified_dir: &std::path::Path,
+    inbox_dir: &std::path::Path,
     id: i64,
-    skip_size_gate: bool,
 ) -> AppResult<()> {
     let row = dirty_data::Entity::find_by_id(id)
         .one(conn)
@@ -63,11 +66,21 @@ pub async fn reingest_dirty_entry_inner(
         )));
     }
 
-    // 复用 scanner 主路径。撞 naming collision 时由 identifier 写 conflict 表
-    // 走 ConflictView。IdentifierError 没派生 From 进 AppError，包装成字符串透出。
-    identifier::identify_file(conn, &path, covers_dir, identified_dir, None, skip_size_gate)
-        .await
-        .map_err(|e| AppError::Other(e.to_string()))?;
+    // Mover-only：把文件搬到 inbox/，由 scanner::Scanner 接管入库流程。
+    std::fs::create_dir_all(inbox_dir)?;
+    let file_name = path.file_name().ok_or_else(|| {
+        AppError::Other(format!("invalid file path: {}", row.file_path))
+    })?;
+    let target = inbox_dir.join(file_name);
+    if target.exists() {
+        return Err(AppError::Other(format!(
+            "inbox already has a file with the same name: {}",
+            target.display()
+        )));
+    }
+    if path != target {
+        std::fs::rename(&path, &target)?;
+    }
 
     let mut am: dirty_data::ActiveModel = row.into();
     am.resolved_at = Set(Some(chrono::Utc::now().to_rfc3339()));
@@ -79,14 +92,6 @@ pub async fn reingest_dirty_entry_inner(
 pub async fn reingest_dirty_entry(
     state: State<'_, AppState>,
     id: i64,
-    skip_size_gate: bool,
 ) -> AppResult<()> {
-    reingest_dirty_entry_inner(
-        &state.conn,
-        &state.covers_dir,
-        &state.config.identified_dir(),
-        id,
-        skip_size_gate,
-    )
-    .await
+    reingest_dirty_entry_inner(&state.conn, &state.config.inbox_dir(), id).await
 }

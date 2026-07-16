@@ -65,7 +65,7 @@ async function onReingest(id: number) {
             <template #trigger>
               <n-button size="small" type="primary" ghost>重新入库</n-button>
             </template>
-            重新入库会让 scanner 跑完整流程（BLAKE3 / 抽封面 / 入库），撞文件名会进 ConflictView。是否继续？
+            重新入库会把文件搬到入库目录让 scanner 自动入库。是否继续？
           </n-popconfirm>
         </article>
       </div>

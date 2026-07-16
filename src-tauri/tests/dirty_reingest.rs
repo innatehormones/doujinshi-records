@@ -1,34 +1,33 @@
 //! Tests for `commands::dirty::reingest_dirty_entry_inner`.
 //!
 //! 走 inner 路径 —— 不绕 AppState，避免拉 Tauri runtime。
+//! Mover-only：验证文件被搬到 inbox/ + dirty_data 软删，DB 不写新 row
+//! （scanner 没在跑，mover-only 不入库）。
 
 mod common;
 
 use doujinshi_records::commands::dirty::reingest_dirty_entry_inner;
-use doujinshi_records::db::{
-    self,
-    entities::{dirty_data, doujinshi_file},
-};
+use doujinshi_records::db::{self, entities::dirty_data};
 use sea_orm::{ActiveModelTrait, DatabaseConnection, EntityTrait, Set};
 use std::io::Write;
 
 struct TestEnv {
     conn: DatabaseConnection,
-    covers_dir: std::path::PathBuf,
+    inbox_dir: std::path::PathBuf,
     identified_dir: std::path::PathBuf,
     _resources_dir: tempfile::TempDir,
 }
 
 async fn make_env() -> TestEnv {
     let resources_dir = tempfile::tempdir().unwrap();
-    let covers_dir = resources_dir.path().join("covers");
+    let inbox_dir = resources_dir.path().join("inbox");
     let identified_dir = resources_dir.path().join("identified");
-    std::fs::create_dir_all(&covers_dir).unwrap();
+    std::fs::create_dir_all(&inbox_dir).unwrap();
     std::fs::create_dir_all(&identified_dir).unwrap();
     let db_path = resources_dir.path().join("data.db");
     let conn = db::connect(&db_path).await.expect("connect");
     db::migrations::init_schema_versioned(&conn).await.expect("init");
-    TestEnv { conn, covers_dir, identified_dir, _resources_dir: resources_dir }
+    TestEnv { conn, inbox_dir, identified_dir, _resources_dir: resources_dir }
 }
 
 /// 建一个最小合法 zip，写到 identified_dir/filename.zip。注意：filename
@@ -74,11 +73,10 @@ async fn insert_orphan_row(
     m.id
 }
 
-/// 正常路径：identified/ 里的孤儿文件 → 调 reingest → 软删 dirty_data 行 +
-/// 新 doujinshi 行 + 封面 + identified/<原名>.zip 自留（文件已在 identified/，
-/// 触发 identifier 的 self-rename 分支，跳过 fs::rename）。
+/// 正常路径：identified/ 里的孤儿文件 → 调 reingest → 文件搬到 inbox/ +
+/// dirty_data 行软删。DB 不写新 doujinshi 行（scanner 没在跑，mover-only 不入库）。
 #[tokio::test]
-async fn reingest_creates_doujinshi_row_and_resolves() {
+async fn reingest_moves_file_to_inbox_and_resolves() {
     let env = make_env().await;
     let zip_path = write_orphan_zip(&env.identified_dir, "[circle] title");
     let id = insert_orphan_row(
@@ -88,8 +86,7 @@ async fn reingest_creates_doujinshi_row_and_resolves() {
     )
     .await;
 
-    let res = reingest_dirty_entry_inner(&env.conn, &env.covers_dir, &env.identified_dir, id, false)
-        .await;
+    let res = reingest_dirty_entry_inner(&env.conn, &env.inbox_dir, id).await;
     res.unwrap();
 
     // dirty_data 行软删
@@ -100,31 +97,42 @@ async fn reingest_creates_doujinshi_row_and_resolves() {
         .unwrap();
     assert!(row.resolved_at.is_some(), "resolved_at 必须被写入");
 
-    // 新 doujinshi 行
-    let rows = doujinshi_file::Entity::find().all(&env.conn).await.unwrap();
-    assert_eq!(rows.len(), 1, "新入库应产 1 行");
-    let new_row = &rows[0];
-    assert_eq!(new_row.title, "title");
-    assert_eq!(new_row.circle.as_deref(), Some("circle"));
-    assert_eq!(new_row.status, "in_library");
-    assert_eq!(new_row.file_state, "present");
-    let new_row = &rows[0];
-    assert_eq!(new_row.title, "title");
-    assert_eq!(new_row.circle.as_deref(), Some("circle"));
-    assert_eq!(new_row.status, "in_library");
-    assert_eq!(new_row.file_state, "present");
+    // 文件已搬到 inbox/
+    assert!(!zip_path.exists(), "原 identified/ 路径不应剩文件");
+    let inbox_target = env.inbox_dir.join(zip_path.file_name().unwrap());
+    assert!(inbox_target.exists(), "inbox/ 应有该文件");
 
-    // identified/ 应留 1 个同名前缀的 zip（rename 后名字可能改成 circle title.zip）
-    let entries: Vec<_> = std::fs::read_dir(&env.identified_dir)
+    // DB 没新 doujinshi 行（mover-only 不入库；scanner 接管但没在跑）
+    use doujinshi_records::db::entities::doujinshi_file;
+    let rows = doujinshi_file::Entity::find().all(&env.conn).await.unwrap();
+    assert_eq!(rows.len(), 0, "mover-only 不写 doujinshi 行；由 scanner 接管");
+}
+
+/// inbox/ 已有同名 → 拒绝，dirty_data 行不动 + 原文件不搬走。
+#[tokio::test]
+async fn reingest_rejects_inbox_name_collision() {
+    let env = make_env().await;
+    let orphan = write_orphan_zip(&env.identified_dir, "dup");
+    std::fs::write(env.inbox_dir.join("dup.zip"), b"existing").unwrap();
+    let id = insert_orphan_row(
+        &env.conn,
+        orphan.to_string_lossy().into_owned(),
+        "identified",
+    )
+    .await;
+
+    let err = reingest_dirty_entry_inner(&env.conn, &env.inbox_dir, id)
+        .await
+        .unwrap_err();
+    assert!(format!("{err:?}").contains("inbox already has"));
+
+    let row = dirty_data::Entity::find_by_id(id)
+        .one(&env.conn)
+        .await
         .unwrap()
-        .filter_map(Result::ok)
-        .filter(|e| {
-            e.file_name()
-                .to_string_lossy()
-                .ends_with(".zip")
-        })
-        .collect();
-    assert_eq!(entries.len(), 1, "identified/ 应剩 1 个 zip");
+        .unwrap();
+    assert!(row.resolved_at.is_none(), "失败的请求不应写 resolved_at");
+    assert!(orphan.exists(), "原文件不应被搬走");
 }
 
 /// reason 非 orphan_file → 拒绝，dirty_data 行不动。
@@ -142,15 +150,9 @@ async fn reingest_rejects_non_orphan_reason() {
     };
     let m = am.insert(&env.conn).await.unwrap();
 
-    let err = reingest_dirty_entry_inner(
-        &env.conn,
-        &env.covers_dir,
-        &env.identified_dir,
-        m.id,
-        false,
-    )
-    .await
-    .unwrap_err();
+    let err = reingest_dirty_entry_inner(&env.conn, &env.inbox_dir, m.id)
+        .await
+        .unwrap_err();
     assert!(format!("{err:?}").contains("only orphan_file"));
 
     let still = dirty_data::Entity::find_by_id(m.id)
@@ -175,14 +177,8 @@ async fn reingest_rejects_missing_file() {
     };
     let m = am.insert(&env.conn).await.unwrap();
 
-    let err = reingest_dirty_entry_inner(
-        &env.conn,
-        &env.covers_dir,
-        &env.identified_dir,
-        m.id,
-        false,
-    )
-    .await
-    .unwrap_err();
+    let err = reingest_dirty_entry_inner(&env.conn, &env.inbox_dir, m.id)
+        .await
+        .unwrap_err();
     assert!(format!("{err:?}").contains("no longer on disk"));
 }

@@ -51,8 +51,8 @@ export const api = {
     invoke<void>("resolve_conflict", { id, action }),
   listDirty: (limit?: number, offset?: number) =>
     invoke<Page<DirtyEntry>>("list_dirty", { limit, offset }),
-  reingestDirtyEntry: (id: number, skipSizeGate = false) =>
-    invoke<void>("reingest_dirty_entry", { id, skipSizeGate }),
+  reingestDirtyEntry: (id: number) =>
+    invoke<void>("reingest_dirty_entry", { id }),
   getSettings: () => invoke<SettingsView>("get_settings"),
   manualScan: () => invoke<number>("manual_scan"),
   getScanStatus: () => invoke<ScanStatus>("get_scan_status"),
