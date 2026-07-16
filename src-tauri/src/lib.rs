@@ -19,6 +19,8 @@ pub struct AppState {
     pub auth_token: Arc<RwLock<String>>,
     /// LRU preview cache（磁盘 + 内存双层）。HTTP images 端点共用。
     pub preview_cache: Arc<services::preview_cache::PreviewCache>,
+    /// 备份/还原服务。单实例，AppState 持有 Arc。
+    pub backup: Arc<services::backup::BackupService>,
 }
 
 pub async fn run(cfg: config::AppConfig, conn: DatabaseConnection) {
@@ -148,6 +150,12 @@ pub async fn run(cfg: config::AppConfig, conn: DatabaseConnection) {
     println!("http api listening on http://127.0.0.1:{}", port);
 
     let cfg_clone = cfg.clone();
+    // BackupService：单实例，持有 Arc → command 层通过 State<SharedBackupService> 拿。
+    let backup = Arc::new(services::backup::BackupService::new_with_db(
+        cfg.db_path(),
+        cfg.backups_dir(),
+        Arc::new(conn.clone()),
+    ));
     let state = AppState {
         conn: conn.clone(),
         scanner: scanner.clone(),
@@ -155,7 +163,26 @@ pub async fn run(cfg: config::AppConfig, conn: DatabaseConnection) {
         config: cfg_clone,
         auth_token: auth_token.clone(),
         preview_cache: preview_cache.clone(),
+        backup: backup.clone(),
     };
+
+    // 启动期单次自动备份检查（>24h 没成功备份就补一次）。失败不影响启动。
+    {
+        let backup = backup.clone();
+        tauri::async_runtime::spawn(async move {
+            match backup.should_auto_backup(24).await {
+                Ok(true) => {
+                    tracing::info!("auto-backup: starting (interval exceeded)");
+                    match backup.backup_now().await {
+                        Ok(r) => tracing::info!("auto-backup: done -> {}", r.path.display()),
+                        Err(e) => tracing::warn!("auto-backup failed: {:?}", e),
+                    }
+                }
+                Ok(false) => tracing::debug!("auto-backup: skipping, recent backup exists"),
+                Err(e) => tracing::warn!("auto-backup threshold check failed: {:?}", e),
+            }
+        });
+    }
 
     tauri::Builder::default()
         .setup({
@@ -195,6 +222,12 @@ pub async fn run(cfg: config::AppConfig, conn: DatabaseConnection) {
             commands::settings::manual_scan,
             commands::settings::regenerate_auth_token,
             commands::settings::set_http_port,
+            commands::backup::get_backup_config,
+            commands::backup::set_backup_config,
+            commands::backup::list_backups,
+            commands::backup::backup_now,
+            commands::backup::stage_restore,
+            commands::backup::delete_backup,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

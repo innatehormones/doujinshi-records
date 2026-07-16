@@ -26,6 +26,7 @@ impl AppConfig {
     pub fn archived_dir(&self) -> PathBuf { self.resources_dir.join("doujinshi-archived") }
     pub fn preview_cache_dir(&self) -> PathBuf { self.resources_dir.join("_preview_cache") }
     pub fn covers_dir(&self) -> PathBuf { self.resources_dir.join("covers") }
+    pub fn backups_dir(&self) -> PathBuf { self.resources_dir.join("backups") }
     pub fn db_path(&self) -> PathBuf { self.resources_dir.join("data.db") }
 
     pub fn ensure_dirs(&self) -> std::io::Result<()> {
@@ -36,6 +37,7 @@ impl AppConfig {
             self.archived_dir(),
             self.preview_cache_dir(),
             self.covers_dir(),
+            self.backups_dir(),
         ] {
             std::fs::create_dir_all(&dir)?;
         }

@@ -1,3 +1,4 @@
+pub mod backup;
 pub mod dirty;
 pub mod inbox;
 pub mod library;

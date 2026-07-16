@@ -146,6 +146,10 @@ impl BackupService {
         self.storage.list_snapshots(&dir)
     }
 
+    pub async fn delete_snapshot(&self, snapshot: &Path) -> anyhow::Result<()> {
+        self.storage.delete_snapshot(snapshot)
+    }
+
     /// 启动期自动备份判断：上次成功备份距今 ≥ `threshold_hours` 则建议跑一次。
     /// 无历史 → true；state 文件 last_at 解析失败 → 也按"是"处理（保守）。
     pub async fn should_auto_backup(&self, threshold_hours: u64) -> anyhow::Result<bool> {

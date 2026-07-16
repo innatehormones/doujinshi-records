@@ -20,6 +20,16 @@ async fn main() {
     cfg.ensure_dirs().expect("failed to ensure dirs");
 
     let db_path = cfg.db_path();
+
+    // 应用待执行还原（用户在 Settings 点了「还原」后会写 marker，
+    // 这里在 DB 打开前 swap 文件——src 坏掉保留 marker 供排查，不影响启动）。
+    let restore_marker = cfg.resources_dir.join(".restore-pending.json");
+    match doujinshi_records::services::backup::apply_pending_restore(&db_path, &restore_marker).await {
+        Ok(Some(src)) => println!("INFO: restore applied from {}", src),
+        Ok(None) => {}
+        Err(e) => eprintln!("WARN: pending restore failed: {:?}", e),
+    }
+
     match doujinshi_records::db::recovery::probe_and_recover(&db_path).await {
         Ok(doujinshi_records::db::recovery::RecoveryAction::BackedUp { backup_path }) => {
             eprintln!("WARN: corrupt db moved to {}, recreating", backup_path.display());
