@@ -32,6 +32,7 @@ import { RouterView, useRoute, useRouter } from "vue-router"
 import { useThemeStore, useScanStatusStore } from "@/stores"
 import ScanProgressToast from "@/components/ScanProgressToast.vue"
 import { buildThemeOverrides } from "./styles/theme-overrides"
+import hljs from "./lib/hljs"
 
 const route = useRoute()
 const router = useRouter()
@@ -87,7 +88,7 @@ function cycleTheme() {
 </script>
 
 <template>
-  <n-config-provider :theme="naiveTheme" :theme-overrides="themeOverrides">
+  <n-config-provider :theme="naiveTheme" :theme-overrides="themeOverrides" :hljs="hljs">
     <n-message-provider>
       <n-layout class="app-shell" has-sider position="absolute">
         <n-layout-sider

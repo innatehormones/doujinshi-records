@@ -1,6 +1,8 @@
 import { createApp } from "vue"
 import { createPinia } from "pinia"
 import naive from "naive-ui"
+import "highlight.js/styles/atom-one-dark.css"
+import "./lib/hljs"
 import App from "./App.vue"
 import router from "./router"
 import { listen } from "@tauri-apps/api/event"

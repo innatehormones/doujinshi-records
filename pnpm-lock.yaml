@@ -17,6 +17,9 @@ importers:
       '@tauri-apps/plugin-shell':
         specifier: ^2.0.1
         version: 2.3.5
+      highlight.js:
+        specifier: ^11.11.1
+        version: 11.11.1
       naive-ui:
         specifier: ^2.41.0
         version: 2.44.1(vue@3.5.39(typescript@5.6.3))
