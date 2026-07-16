@@ -17,6 +17,7 @@
 - 状态机「DB 优先 + 文件 best-effort」：源文件缺失不阻塞 status 更新；目标目录同名视为孤儿（`dirty_data(reason='overwritten_by_state_switch')`），自动覆盖
 - 销毁复合操作：`status=deleted` + `file_state=absent_confirmed` + best-effort 删文件 + LRU 缩略图失效
 - 启动时脏数据扫描：扫 4 个状态目录（不扫 deleted），按 file_state 三态更新
+- 脏数据页对 `orphan_file` 条目提供「重新入库」按钮：mover-only，`fs::rename` 到 inbox + 软删 dirty_data 行，剩下的入库由后台 scanner 接管（UI 立即返回，撞名 / rar 失败由 ConflictView / rar-error 兜底）
 - 文件名冲突检测：停在 Inbox，等用户决定跳过或比对；冲突 ReplaceB 把旧记录推到 `deleted + absent_confirmed`（不是终态，可恢复）
 - 回收站视图：按 `file_state` 分 present / gone 两段；还原 + 永久删除
 - 本地 HTTP API 供浏览器扩展（`/api/health`、`/api/doujinshi/...`）
@@ -152,6 +153,7 @@ V4 在 V7 schema 之上做 3 处增量改动（均为非破坏性升级）：
 - V3.1 spec（LRU preview cache）：`docs/superpowers/specs/2026-07-11-v31-lru-preview-cache.md`
 - **V4 spec（数据与文件解耦，当前权威）**：`docs/superpowers/specs/2026-07-15-decouple-data-and-file.md`
 - V4 实施 plan：`docs/superpowers/plans/2026-07-15-decouple-data-and-file.md`
+- **V4.5 增量 spec（脏数据页「重新入库」按钮）**：`docs/superpowers/specs/2026-07-16-dirty-reingest-button.md`
 - 实施 plan（V1）：`docs/superpowers/plans/2026-07-09-doujinshi-records-v1.md`
 - V3 plan（归档 + 脏数据 + webp）：`docs/superpowers/plans/2026-07-11-v3-archive-and-dirty-data.md`
 - V1.x 增量 plan：`docs/superpowers/plans/v1x/`
