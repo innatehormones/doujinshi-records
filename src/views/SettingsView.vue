@@ -146,6 +146,16 @@ function fmtSize(bytes: number): string {
   if (bytes >= 1024) return Math.round(bytes / 1024) + " KB"
   return bytes + " B"
 }
+
+/// RFC3339 (UTC) → 本地时区 YYYY-MM-DD HH:MM。后端 chrono::Utc 写入，
+/// 文件名也用 UTC 时刻；前端展示成本地时间让用户判断「是不是我想要的那份」。
+function fmtMtime(iso: string): string {
+  const d = new Date(iso)
+  if (isNaN(d.getTime())) return iso
+  const pad = (n: number) => String(n).padStart(2, "0")
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ` +
+         `${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
 </script>
 
 <template>
@@ -347,6 +357,7 @@ function fmtSize(bytes: number): string {
           <div v-if="snapshots.length > 0" class="snapshot-list">
             <header class="snapshot-head">
               <span class="col-path">路径</span>
+              <span class="col-time">时间</span>
               <span class="col-size">大小</span>
               <span class="col-act">操作</span>
             </header>
@@ -358,6 +369,7 @@ function fmtSize(bytes: number): string {
                   </template>
                   {{ s.path }}
                 </n-tooltip>
+                <span class="col-time font-mono text-caption text-smoke">{{ fmtMtime(s.mtime) }}</span>
                 <span class="col-size font-mono text-caption text-smoke">{{ fmtSize(s.size_bytes) }}</span>
                 <span class="col-act">
                   <n-button size="tiny" @click="stageRestore(s)">恢复</n-button>
@@ -564,7 +576,7 @@ function fmtSize(bytes: number): string {
 .snapshot-head,
 .snapshot-row {
   display: grid;
-  grid-template-columns: 1fr 80px 132px;
+  grid-template-columns: 1fr 130px 70px 132px;
   align-items: center;
   gap: 12px;
   padding: 8px 12px;
