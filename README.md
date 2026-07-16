@@ -20,6 +20,7 @@
 - 脏数据页对 `orphan_file` 条目提供「重新入库」按钮：mover-only，`fs::rename` 到 inbox + 软删 dirty_data 行，剩下的入库由后台 scanner 接管（UI 立即返回，撞名 / rar 失败由 ConflictView / rar-error 兜底）
 - 文件名冲突检测：停在 Inbox，等用户决定跳过或比对；冲突 ReplaceB 把旧记录推到 `deleted + absent_confirmed`（不是终态，可恢复）
 - 文件回收站视图：V4.6 起只展示「待删除文件」（`status='recycle' + file_state='present'`），还原 / 永久删除；已被销毁的记录可在 Library 用 status filter（recycle / deleted）找到
+- Inbox / RecycleBin 列表封面显示开关（V4.9）：标题右侧 Image/Rows3 切换，开启时每条卡片左侧渲染 64×80 缩略图；待处理冲突只显示 A 端封面（B 没入库无封面）
 - 本地 HTTP API 供浏览器扩展（`/api/health`、`/api/doujinshi/...`）
 - 实时更新：扫描器 emit `library-updated` 事件，前端自动刷新
 
@@ -157,6 +158,7 @@ V4 在 V7 schema 之上做 3 处增量改动（均为非破坏性升级）：
 - **V4.6 增量 spec（文件回收站只保留「待删除文件」）**：`docs/superpowers/specs/2026-07-16-v46-recycle-simplification.md`
 - **V4.7 增量 spec（设置页重设计 + 备份快照 mtime）**：`docs/superpowers/specs/2026-07-16-v47-settings-redesign.md`
 - **V4.8 增量 spec（HTTP API 测试弹窗）**：`docs/superpowers/specs/2026-07-16-v48-api-test-dialog.md`
+- **V4.9 增量 spec（Inbox / RecycleBin 列表封面显示开关）**：`docs/superpowers/specs/2026-07-16-v49-cover-toggle.md`
 - 实施 plan（V1）：`docs/superpowers/plans/2026-07-09-doujinshi-records-v1.md`
 - V3 plan（归档 + 脏数据 + webp）：`docs/superpowers/plans/2026-07-11-v3-archive-and-dirty-data.md`
 - V1.x 增量 plan：`docs/superpowers/plans/v1x/`
