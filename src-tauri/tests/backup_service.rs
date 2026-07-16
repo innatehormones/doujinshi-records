@@ -7,8 +7,10 @@
 
 use doujinshi_records::services::backup::{
     backup_filename, clear_restore_marker, hash_db_file, read_restore_marker, write_restore_marker,
-    BackupConfig, BackupStorage, LocalFsStorage, RestorePending,
+    BackupConfig, BackupService, BackupStorage, LocalFsStorage, RestorePending, SettingsHandle,
 };
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex as StdMutex};
 
 #[test]
 fn backup_config_defaults() {
@@ -117,4 +119,87 @@ fn local_fs_delete_missing_is_ok() {
     let dir = tempfile::tempdir().unwrap();
     let p = dir.path().join("nope.db");
     LocalFsStorage.delete_snapshot(&p).unwrap(); // 不报错
+}
+
+#[derive(Clone)]
+struct FakeSettings {
+    inner: Arc<StdMutex<HashMap<String, String>>>,
+}
+impl FakeSettings {
+    fn new() -> Self { Self { inner: Arc::new(StdMutex::new(HashMap::new())) } }
+    fn get(&self, key: &str) -> Option<String> {
+        self.inner.lock().unwrap().get(key).cloned()
+    }
+}
+impl SettingsHandle for FakeSettings {
+    fn read(
+        &self,
+        key: &str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<Option<String>>> + Send + '_>,
+    > {
+        let key = key.to_string();
+        Box::pin(async move { Ok(self.inner.lock().unwrap().get(&key).cloned()) })
+    }
+    fn write(
+        &self,
+        key: &str,
+        value: &str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = anyhow::Result<()>> + Send + '_>,
+    > {
+        let key = key.to_string();
+        let value = value.to_string();
+        Box::pin(async move {
+            self.inner.lock().unwrap().insert(key, value);
+            Ok(())
+        })
+    }
+}
+
+#[tokio::test]
+async fn service_get_config_returns_defaults_when_empty() {
+    let dir = tempfile::tempdir().unwrap();
+    let svc = BackupService::new(
+        dir.path().join("data.db"),
+        dir.path().join("backups"),
+        Arc::new(LocalFsStorage),
+        Arc::new(FakeSettings::new()),
+    );
+    let cfg = svc.get_config().await.unwrap();
+    assert_eq!(cfg, BackupConfig::default());
+}
+
+#[tokio::test]
+async fn service_set_config_persists() {
+    let dir = tempfile::tempdir().unwrap();
+    let settings = FakeSettings::new();
+    let svc = BackupService::new(
+        dir.path().join("data.db"),
+        dir.path().join("backups"),
+        Arc::new(LocalFsStorage),
+        Arc::new(settings.clone()),
+    );
+    svc.set_config(Some("D:/custom"), 5).await.unwrap();
+    let cfg = svc.get_config().await.unwrap();
+    assert_eq!(cfg.dir, "D:/custom");
+    assert_eq!(cfg.retention_count, 5);
+    assert_eq!(settings.get("backup_dir").as_deref(), Some("D:/custom"));
+    assert_eq!(settings.get("backup_retention_count").as_deref(), Some("5"));
+}
+
+#[test]
+fn service_resolve_backup_dir_empty_falls_back_to_default() {
+    use std::path::PathBuf;
+    let svc = BackupService::new(
+        PathBuf::from("/tmp/data.db"),
+        PathBuf::from("/tmp/resources/backups"),
+        Arc::new(LocalFsStorage),
+        Arc::new(FakeSettings::new()),
+    );
+    let cfg = BackupConfig { dir: String::new(), retention_count: 10 };
+    assert_eq!(svc.resolve_backup_dir(&cfg), PathBuf::from("/tmp/resources/backups"));
+
+    let cfg2 = BackupConfig { dir: "D:/custom".into(), retention_count: 5 };
+    assert_eq!(svc.resolve_backup_dir(&cfg2), PathBuf::from("D:/custom"));
 }

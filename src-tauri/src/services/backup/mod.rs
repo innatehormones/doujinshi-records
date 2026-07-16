@@ -13,6 +13,7 @@ use std::path::Path;
 pub mod service;
 pub mod storage;
 
+pub use service::{BackupService, DbSettingsHandle, SettingsHandle};
 pub use storage::{BackupStorage, LocalFsStorage, SnapshotInfo};
 
 /// 用户可见的备份配置。`dir = ""` 表示使用默认 `resources/backups/`。
