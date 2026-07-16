@@ -154,6 +154,8 @@ V4 在 V7 schema 之上做 3 处增量改动（均为非破坏性升级）：
 - **V4 spec（数据与文件解耦，当前权威）**：`docs/superpowers/specs/2026-07-15-decouple-data-and-file.md`
 - V4 实施 plan：`docs/superpowers/plans/2026-07-15-decouple-data-and-file.md`
 - **V4.5 增量 spec（脏数据页「重新入库」按钮）**：`docs/superpowers/specs/2026-07-16-dirty-reingest-button.md`
+- **V4.6 增量 spec（文件回收站只保留「待删除文件」）**：`docs/superpowers/specs/2026-07-16-v46-recycle-simplification.md`
+- **V4.7 增量 spec（设置页重设计 + 备份快照 mtime）**：`docs/superpowers/specs/2026-07-16-v47-settings-redesign.md`
 - 实施 plan（V1）：`docs/superpowers/plans/2026-07-09-doujinshi-records-v1.md`
 - V3 plan（归档 + 脏数据 + webp）：`docs/superpowers/plans/2026-07-11-v3-archive-and-dirty-data.md`
 - V1.x 增量 plan：`docs/superpowers/plans/v1x/`
