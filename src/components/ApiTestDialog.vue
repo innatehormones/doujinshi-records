@@ -8,7 +8,7 @@ import { computed, ref, watch } from "vue"
 import {
   NModal, NButton, NInput, NCode, NEmpty, NSpin, useMessage,
 } from "naive-ui"
-import { ClipboardCopy, Play, X } from "@lucide/vue"
+import { ClipboardCopy, Play } from "@lucide/vue"
 import { useSettingsStore } from "@/stores"
 
 const props = defineProps<{
@@ -38,8 +38,7 @@ const response = ref<{
 
 const sending = ref(false)
 
-/// 路径 / query 里所有 `<placeholder>` 名字。`<id>` / `<hash>` 是 path 风格，
-/// `<blake3>` 是 query 参数；两者拆开方便差异化展示。
+/// 路径里所有 `<placeholder>` 名字（`<id>` / `<hash>` / `<file_id>`）。
 const pathPlaceholders = computed(() => {
   const [p] = props.path.split("?")
   const out: string[] = []
@@ -49,24 +48,44 @@ const pathPlaceholders = computed(() => {
   return out
 })
 
-const queryPlaceholders = computed(() => {
+/// Query 串里的"待填"参数。识别两种风格：
+///   - `name=<placeholder>` → 拿 placeholder 名字当 key（如 `<blake3>`）
+///   - `name=...` → 拿 key 名字当参数名（如 `q`）
+/// 两种都自动生成输入框，分别做 `<name>` / `...` 替换。
+const querySlots = computed(() => {
   const idx = props.path.indexOf("?")
   if (idx < 0) return []
   const q = props.path.slice(idx + 1)
-  const out: string[] = []
-  const re = /=(\s*)?<(\w+)>/g
+  const out: { name: string; source: "placeholder" | "dots" }[] = []
+  const re = /(\w+)=(?:<(\w+)>|\.{3})/g
   let m: RegExpExecArray | null
-  while ((m = re.exec(q)) !== null) out.push(m[2])
+  while ((m = re.exec(q)) !== null) {
+    if (m[2]) out.push({ name: m[2], source: "placeholder" })
+    else if (m[1]) out.push({ name: m[1], source: "dots" })
+  }
   return out
 })
 
-/// path + query 里的 placeholder 替换成用户输入值。未填的 placeholder
-/// 留 `<name>`（curl 看着更直白，fetch 时 encode 后端大概率拿到 400）。
+/// 合并 path + query 占位输入框（顺序：path → query）。
+const allInputs = computed(() => {
+  return [
+    ...pathPlaceholders.value.map((n) => ({ name: n, kind: "path" })),
+    ...querySlots.value.map((s) => ({ name: s.name, kind: "query" })),
+  ]
+})
+
+/// path + query 里的占位替换成用户输入值：
+///   - `<placeholder>` → params[name]（未填留 `<name>`）
+///   - `name=...` → `name=value`（未填保留 `...`）
 const resolvedPath = computed(() => {
   let p = props.path
-  for (const [k, v] of Object.entries(params.value)) {
-    p = p.replace(new RegExp(`<${k}>`), v || `<${k}>`)
-  }
+  p = p.replace(/<(\w+)>/g, (full, name) =>
+    params.value[name] ? params.value[name] : full,
+  )
+  p = p.replace(/(\w+)=\.{3}/g, (full, key) => {
+    const v = params.value[key]
+    return v ? `${key}=${v}` : full
+  })
   return p
 })
 
@@ -97,10 +116,6 @@ watch(
     }
   },
 )
-
-function paramKey(name: string): string {
-  return `__${name}`
-}
 
 function copyCurl() {
   navigator.clipboard?.writeText(curlText.value)
@@ -173,12 +188,6 @@ const statusKind = computed(() => {
       </div>
     </template>
 
-    <template #header-extra>
-      <n-button text size="tiny" @click="emit('update:show', false)">
-        <template #icon><X :size="14" :stroke-width="1.8" /></template>
-      </n-button>
-    </template>
-
     <div class="dialog-body">
       <section class="dialog-pane">
         <header class="pane-head">
@@ -186,22 +195,13 @@ const statusKind = computed(() => {
           <span class="pane-hint">用当前 Token 鉴权</span>
         </header>
 
-        <div v-if="pathPlaceholders.length || queryPlaceholders.length" class="param-grid">
-          <div v-for="n in pathPlaceholders" :key="`p-${n}`" class="param-row">
-            <label class="param-label">path · {{ n }}</label>
+        <div v-if="allInputs.length" class="param-grid">
+          <div v-for="slot in allInputs" :key="slot.name" class="param-row">
+            <label class="param-label">{{ slot.kind }} · {{ slot.name }}</label>
             <n-input
-              :value="params[paramKey(n)] ?? ''"
-              @update:value="(v: string) => (params[paramKey(n)] = v)"
-              :placeholder="`<${n}>`"
-              size="small"
-            />
-          </div>
-          <div v-for="n in queryPlaceholders" :key="`q-${n}`" class="param-row">
-            <label class="param-label">query · {{ n }}</label>
-            <n-input
-              :value="params[paramKey(n)] ?? ''"
-              @update:value="(v: string) => (params[paramKey(n)] = v)"
-              :placeholder="`<${n}>`"
+              :value="params[slot.name] ?? ''"
+              @update:value="(v: string) => (params[slot.name] = v)"
+              :placeholder="`<${slot.name}>`"
               size="small"
             />
           </div>
@@ -287,7 +287,8 @@ const statusKind = computed(() => {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 16px;
-  min-height: 360px;
+  align-items: stretch;
+  min-height: 420px;
 }
 @media (max-width: 800px) {
   .dialog-body { grid-template-columns: 1fr; }
@@ -302,6 +303,7 @@ const statusKind = computed(() => {
   border-radius: var(--radius-cards);
   padding: 14px 16px;
   min-width: 0;
+  min-height: 0;
 }
 .pane-head {
   display: flex;
@@ -343,6 +345,8 @@ const statusKind = computed(() => {
   display: flex;
   flex-direction: column;
   gap: 6px;
+  flex: 1;
+  min-height: 0;
 }
 .curl-head {
   display: flex;
@@ -354,8 +358,13 @@ const statusKind = computed(() => {
   font-size: 11px;
   color: var(--color-smoke);
 }
+.curl-code {
+  flex: 1;
+  min-height: 0;
+}
 .curl-code :deep(pre) {
-  max-height: 160px;
+  height: 100%;
+  max-height: 100%;
   overflow: auto;
   margin: 0;
 }
@@ -418,8 +427,13 @@ const statusKind = computed(() => {
   overflow-x: auto;
   white-space: nowrap;
 }
+.response-body {
+  flex: 1;
+  min-height: 0;
+}
 .response-body :deep(pre) {
-  max-height: 280px;
+  height: 100%;
+  max-height: 100%;
   overflow: auto;
   margin: 0;
 }
