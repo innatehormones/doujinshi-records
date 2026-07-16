@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted, computed, watch } from "vue"
 import {
-  NCard, NSpace, NButton, NTag, NSpin, useMessage, NCode, NDivider,
-  NInputNumber, NSwitch, NInput, NPopconfirm,
+  NButton, NTag, NSpin, useMessage, NCode,
+  NInputNumber, NSwitch, NInput, NPopconfirm, NTooltip,
 } from "naive-ui"
+import { RefreshCw, ClipboardCopy, RotateCw, Play, Save, Trash2 } from "@lucide/vue"
 import { useSettingsStore } from "@/stores"
 import { api } from "@/api/tauri"
 import type { BackupConfig, BackupSnapshot } from "@/types/api"
@@ -16,7 +17,6 @@ const scanning = ref(false)
 const portInput = ref<number>(0)
 const portLocked = ref(false)
 
-// 备份状态
 const backupCfg = ref<BackupConfig | null>(null)
 const backupDirInput = ref<string>("")
 const retentionInput = ref<number>(10)
@@ -38,9 +38,7 @@ watch(
 
 watch(
   () => store.data,
-  (d) => {
-    if (d) loadBackup()
-  },
+  (d) => { if (d) loadBackup() },
 )
 
 async function loadBackup() {
@@ -117,7 +115,7 @@ async function doBackupNow() {
 async function stageRestore(snap: BackupSnapshot) {
   try {
     await api.stageRestore(snap.path)
-    message.warning("已标记还原。请退出应用并重新启动生效。")
+    message.warning("已标记还原。退出应用并重新启动生效。")
   } catch (e) {
     message.error(String(e))
   }
@@ -133,168 +131,581 @@ async function deleteSnap(snap: BackupSnapshot) {
   }
 }
 
-const apiLines = computed(() => [
-  "GET  " + store.apiBase + "/api/health              健康检查（无需 Token）",
-  "GET  " + store.apiBase + "/api/doujinshi/search?q=关键词",
-  "GET  " + store.apiBase + "/api/doujinshi/check?hash=<blake3>  检查哈希是否在库",
-  "GET  " + store.apiBase + "/api/doujinshi/by-hash/<hash>       按哈希查询",
-  "GET  " + store.apiBase + "/api/doujinshi/<id>                  按 ID 查询",
-  "GET  " + store.apiBase + "/api/covers/by-hash/<hash>          按哈希取封面",
-  "GET  " + store.apiBase + "/api/covers/<file_id>               按 ID 取封面",
+/// HTTP API 路由表——三栏对齐（METHOD / PATH / 描述）显示。
+/// auth-required 字段在「描述」里用「需 Token」注明（除 health 外都需要）。
+const apiRoutes = computed(() => [
+  { method: "GET",    path: "/api/health",                          note: "健康检查（无需 Token）" },
+  { method: "GET",    path: "/api/doujinshi/search?q=...",           note: "标题/社团/文件名模糊搜索（需 Token）" },
+  { method: "GET",    path: "/api/doujinshi/check?hash=<blake3>",   note: "检查哈希是否在库（需 Token）" },
+  { method: "GET",    path: "/api/doujinshi/by-hash/<hash>",         note: "按哈希查询（需 Token）" },
+  { method: "GET",    path: "/api/doujinshi/<id>",                   note: "按 ID 查询（需 Token）" },
+  { method: "GET",    path: "/api/covers/by-hash/<hash>",            note: "按哈希取封面（需 Token）" },
+  { method: "GET",    path: "/api/covers/<file_id>",                 note: "按 ID 取封面（需 Token）" },
 ])
+
+function fmtSize(bytes: number): string {
+  if (bytes >= 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + " MB"
+  if (bytes >= 1024) return Math.round(bytes / 1024) + " KB"
+  return bytes + " B"
+}
 </script>
 
 <template>
-  <div class="page">
+  <div class="page settings-page">
     <header class="flex items-baseline justify-between gap-4">
       <h1 class="text-heading-sm font-medium text-snow tracking-body">设置</h1>
-      <span class="font-mono text-caption text-smoke tracking-[0.1em]">运行时 + API</span>
+      <span class="font-mono text-caption text-smoke tracking-[0.1em]">运行时 · 数据 · 外部集成</span>
     </header>
-    <n-spin :show="scanning">
-      <n-space vertical size="large">
-        <n-card title="路径">
-          <n-spin :show="!store.data">
-            <div v-if="store.data" class="flex flex-col gap-1">
-              <div>资源目录: <n-tag>{{ store.data.resources_dir }}</n-tag></div>
-              <div>入库冲突处理: <n-tag>{{ store.data.inbox_dir }}</n-tag></div>
-              <div>已识别: <n-tag>{{ store.data.identified_dir }}</n-tag></div>
-              <div>待删除: <n-tag>{{ store.data.will_delete_dir }}</n-tag></div>
-              <div>封面: <n-tag>{{ store.data.covers_dir }}</n-tag></div>
-            </div>
-          </n-spin>
-          <n-button size="small" class="mt-2" @click="store.load()">
-            刷新
-          </n-button>
-        </n-card>
 
-        <n-card title="HTTP 端口">
-          <p class="text-caption text-silver-mist">
-            锁定端口 = 应用启动时尝试绑定这个端口；占用则按 100/200/300ms 重试 3 次后回退到随机端口。
-            关闭锁定 = 每次启动由操作系统分配空闲端口。
+    <!-- ==================== 运行时 ==================== -->
+    <section class="settings-section">
+      <div class="section-eyebrow">
+        <span class="section-tick" />
+        <span class="section-label">运行时</span>
+        <span class="section-rule" />
+      </div>
+
+      <article class="settings-card settings-card--ops">
+        <div class="settings-card-rail" />
+        <div class="settings-card-body">
+          <header class="settings-card-head">
+            <h3 class="settings-card-title">HTTP 端口</h3>
+            <n-tag v-if="store.data" size="small" type="success">
+              当前 {{ store.data.http_port }}（{{ store.data.http_port_locked ? "已锁定" : "随机" }}）
+            </n-tag>
+          </header>
+          <p class="settings-card-desc">
+            锁定端口 = 启动时尝试绑定；占用时按 100/200/300ms 重试 3 次后回退随机端口。关闭锁定 = 由操作系统分配空闲端口。
           </p>
-          <n-space align="center">
+          <div class="settings-card-controls">
             <n-input-number
               v-model:value="portInput"
-              :min="0"
-              :max="65535"
-              :disabled="!portLocked"
-              placeholder="0 = 随机"
-              class="w-[140px]"
+              :min="0" :max="65535" :disabled="!portLocked"
+              placeholder="0 = 随机" class="w-[140px]"
             />
             <n-switch v-model:value="portLocked" />
             <span class="text-caption text-silver-mist">
               {{ portLocked ? "固定端口" : "随机端口" }}
             </span>
+          </div>
+          <footer class="settings-card-actions">
             <n-button type="primary" size="small" @click="savePort">
-              保存（重启后生效）
+              <template #icon><Save :size="13" :stroke-width="1.8" /></template>
+              保存
             </n-button>
-            <n-tag v-if="store.data" size="small">
-              当前：{{ store.data.http_port }}（{{ store.data.http_port_locked ? "已锁定" : "随机" }}）
+            <n-tag size="small" type="warning">重启后生效</n-tag>
+          </footer>
+        </div>
+      </article>
+
+      <article class="settings-card settings-card--ops">
+        <div class="settings-card-rail" />
+        <div class="settings-card-body">
+          <header class="settings-card-head">
+            <h3 class="settings-card-title">HTTP Token</h3>
+            <n-tag size="small">本地 API 鉴权</n-tag>
+          </header>
+          <p class="settings-card-desc">
+            浏览器扩展或外部脚本调用 HTTP API 时在 <code>Authorization: Bearer &lt;token&gt;</code> 头里带这个值。重新生成后旧 Token 立刻失效。
+          </p>
+          <div class="settings-card-controls">
+            <n-code
+              :code="store.data?.auth_token ?? ''"
+              class="min-w-0 flex-1 overflow-x-auto"
+            />
+          </div>
+          <footer class="settings-card-actions">
+            <n-button size="small" @click="copy(store.data?.auth_token ?? '')">
+              <template #icon><ClipboardCopy :size="13" :stroke-width="1.8" /></template>
+              复制
+            </n-button>
+            <n-popconfirm @positive-click="regenToken">
+              <template #trigger>
+                <n-button size="small" type="warning">
+                  <template #icon><RotateCw :size="13" :stroke-width="1.8" /></template>
+                  重新生成
+                </n-button>
+              </template>
+              重新生成 Token 后旧值立刻失效，确认继续？
+            </n-popconfirm>
+          </footer>
+        </div>
+      </article>
+
+      <article class="settings-card settings-card--ops">
+        <div class="settings-card-rail" />
+        <div class="settings-card-body">
+          <header class="settings-card-head">
+            <h3 class="settings-card-title">Inbox 目录</h3>
+            <n-tag size="small" type="info">自动入库</n-tag>
+          </header>
+          <p class="settings-card-desc">
+            把压缩包拖到这里，应用会监听并自动处理（hash 去重 / 抽封面 / 入库）。撞名压缩包会留在 Inbox 等用户在「入库冲突处理」页解决。
+          </p>
+          <div class="settings-card-controls">
+            <n-input :value="store.data?.inbox_dir ?? ''" readonly />
+          </div>
+          <footer class="settings-card-actions">
+            <n-button size="small" @click="copy(store.data?.inbox_dir ?? '')">
+              <template #icon><ClipboardCopy :size="13" :stroke-width="1.8" /></template>
+              复制路径
+            </n-button>
+          </footer>
+        </div>
+      </article>
+
+      <article class="settings-card settings-card--ops">
+        <div class="settings-card-rail" />
+        <div class="settings-card-body">
+          <header class="settings-card-head">
+            <h3 class="settings-card-title">手动扫描</h3>
+            <n-tag v-if="scanResult !== null" size="small">
+              上次处理 {{ scanResult }} 个
             </n-tag>
-          </n-space>
-        </n-card>
-
-        <n-card title="HTTP Token">
-          <p class="text-caption text-silver-mist">
-            浏览器扩展和外部脚本调用 HTTP API 时需要在 <code>Authorization: Bearer &lt;token&gt;</code> 头里带这个值。
-            重新生成后旧 Token 立刻失效。
+          </header>
+          <p class="settings-card-desc">
+            后台已监听 <code>resources/doujinshi/</code> 顶层文件变化（2 秒防抖）。如果怀疑漏掉了某个文件，用「手动扫描」立即跑一遍。
           </p>
-          <n-space align="center" class="w-full">
-            <n-code :code="store.data?.auth_token ?? ''" class="min-w-0 flex-1 overflow-x-auto" />
-            <n-button size="small" @click="copy(store.data?.auth_token ?? '')">复制</n-button>
-            <n-button size="small" type="warning" @click="regenToken">重新生成</n-button>
-          </n-space>
-        </n-card>
+          <footer class="settings-card-actions">
+            <n-button type="primary" :loading="scanning" @click="runScan">
+              <template #icon><Play :size="13" :stroke-width="1.8" /></template>
+              立即扫描
+            </n-button>
+          </footer>
+        </div>
+      </article>
+    </section>
 
-        <n-card title="Inbox 目录">
-          <p class="text-caption text-silver-mist">
-            入库冲突处理压缩包放这里，应用会自动处理。
-          </p>
-          <n-input :value="store.data?.inbox_dir ?? ''" readonly />
-        </n-card>
+    <!-- ==================== 数据 ==================== -->
+    <section class="settings-section">
+      <div class="section-eyebrow">
+        <span class="section-tick section-tick--data" />
+        <span class="section-label">数据</span>
+        <span class="section-rule" />
+      </div>
 
-        <n-card title="数据备份">
-          <p class="text-caption text-silver-mist">
-            仅备份 data.db（不含压缩文件）。目录留空 = 默认 <code>resources/backups/</code>。
-            内容未变时会自动跳过；启动期超过 24h 没成功备份会自动补一次。
+      <article class="settings-card settings-card--data">
+        <div class="settings-card-rail" />
+        <div class="settings-card-body">
+          <header class="settings-card-head">
+            <h3 class="settings-card-title">资源目录</h3>
+            <n-button size="tiny" @click="store.load()">
+              <template #icon><RefreshCw :size="12" :stroke-width="1.8" /></template>
+              刷新
+            </n-button>
+          </header>
+          <p class="settings-card-desc">
+            应用运行时数据根目录。所有 4 个数据目录（Inbox / 已识别 / 待删除 / 归档）都在它下面。
           </p>
-          <n-space align="center" class="mt-2 flex-wrap">
-            <n-input
-              v-model:value="backupDirInput"
-              placeholder="默认目录"
-              class="min-w-[260px]"
-            />
-            <span class="text-caption text-silver-mist">目录</span>
-            <n-input-number
-              v-model:value="retentionInput"
-              :min="0"
-              :max="999"
-              placeholder="保留数"
-              class="w-[120px]"
-            />
-            <span class="text-caption text-silver-mist">保留最近 N 个（0 = 不限）</span>
-            <n-button type="primary" size="small" @click="saveBackupConfig">保存</n-button>
-          </n-space>
-          <n-space class="mt-3">
-            <n-button :loading="backingUp" @click="doBackupNow">立即备份</n-button>
+          <n-spin :show="!store.data">
+            <ul v-if="store.data" class="path-list">
+              <li v-for="row in [
+                { label: '资源根', value: store.data.resources_dir },
+                { label: '入库冲突处理', value: store.data.inbox_dir },
+                { label: '已识别', value: store.data.identified_dir },
+                { label: '文件回收站', value: store.data.will_delete_dir },
+                { label: '封面缓存', value: store.data.covers_dir },
+              ]" :key="row.label" class="path-row">
+                <span class="path-key">{{ row.label }}</span>
+                <n-code :code="row.value" class="path-value" />
+              </li>
+            </ul>
+          </n-spin>
+        </div>
+      </article>
+
+      <article class="settings-card settings-card--data">
+        <div class="settings-card-rail" />
+        <div class="settings-card-body">
+          <header class="settings-card-head">
+            <h3 class="settings-card-title">数据备份</h3>
             <n-tag v-if="backupCfg" size="small">
-              当前：{{ backupCfg.dir || "默认目录" }}，保留 {{ backupCfg.retention_count }}
+              当前：{{ backupCfg.dir || "默认目录" }} · 保留 {{ backupCfg.retention_count }}
             </n-tag>
-          </n-space>
-          <div v-if="snapshots.length === 0" class="mt-3 text-caption text-silver-mist">
-            还没有备份
-          </div>
-          <div v-else class="mt-3 grid gap-2">
-            <div
-              v-for="s in snapshots"
-              :key="s.path"
-              class="flex items-center gap-2 font-mono text-caption"
-            >
-              <span class="flex-1 truncate" :title="s.path">{{ s.path }}</span>
-              <n-tag size="small">{{ Math.round(s.size_bytes / 1024) }} KB</n-tag>
-              <n-button size="tiny" type="warning" @click="stageRestore(s)">
-                恢复
-              </n-button>
-              <n-popconfirm @positive-click="deleteSnap(s)">
-                <template #trigger>
-                  <n-button size="tiny" type="error">删除</n-button>
-                </template>
-                确认删除该快照？无法恢复。
-              </n-popconfirm>
+          </header>
+          <p class="settings-card-desc">
+            仅备份 <code>data.db</code>（不含压缩文件）。目录留空 = 默认 <code>resources/backups/</code>。内容未变时自动跳过；启动期超过 24h 没成功备份会自动补一次。
+          </p>
+          <div class="settings-card-controls">
+            <div class="control-grid">
+              <label class="control-label">备份目录</label>
+              <n-input
+                v-model:value="backupDirInput"
+                placeholder="默认 resources/backups/"
+                class="control-input"
+              />
+            </div>
+            <div class="control-grid">
+              <label class="control-label">保留最近</label>
+              <n-input-number
+                v-model:value="retentionInput" :min="0" :max="999"
+                placeholder="0 = 不限" class="w-[140px]"
+              />
+              <span class="text-caption text-silver-mist">个快照（0 = 不限）</span>
             </div>
           </div>
-        </n-card>
+          <footer class="settings-card-actions">
+            <n-button type="primary" size="small" @click="saveBackupConfig">
+              <template #icon><Save :size="13" :stroke-width="1.8" /></template>
+              保存
+            </n-button>
+            <n-popconfirm @positive-click="doBackupNow">
+              <template #trigger>
+                <n-button :loading="backingUp" size="small">
+                  <template #icon><Play :size="13" :stroke-width="1.8" /></template>
+                  立即备份
+                </n-button>
+              </template>
+              立即执行一次数据库备份？耗时几秒。
+            </n-popconfirm>
+          </footer>
 
-        <n-card title="HTTP API（供浏览器扩展使用）">
-          <p class="text-caption text-silver-mist">
-            本应用在 127.0.0.1 暴露本地 HTTP API，给外部工具（浏览器扩展、脚本）查询本库。
-            除 <code>/api/health</code> 外所有路由都需要带 <code>Authorization: Bearer &lt;token&gt;</code> 头（见上方 HTTP Token 卡片）。
+          <div v-if="snapshots.length > 0" class="snapshot-list">
+            <header class="snapshot-head">
+              <span class="col-path">路径</span>
+              <span class="col-size">大小</span>
+              <span class="col-act">操作</span>
+            </header>
+            <ul class="snapshot-body">
+              <li v-for="s in snapshots" :key="s.path" class="snapshot-row">
+                <n-tooltip :show-arrow="true" placement="top">
+                  <template #trigger>
+                    <span class="col-path truncate" :title="s.path">{{ s.path }}</span>
+                  </template>
+                  {{ s.path }}
+                </n-tooltip>
+                <span class="col-size font-mono text-caption text-smoke">{{ fmtSize(s.size_bytes) }}</span>
+                <span class="col-act">
+                  <n-button size="tiny" @click="stageRestore(s)">恢复</n-button>
+                  <n-popconfirm @positive-click="deleteSnap(s)">
+                    <template #trigger>
+                      <n-button size="tiny" type="error">
+                        <template #icon><Trash2 :size="12" :stroke-width="1.8" /></template>
+                        删除
+                      </n-button>
+                    </template>
+                    确认删除该快照？无法恢复。
+                  </n-popconfirm>
+                </span>
+              </li>
+            </ul>
+          </div>
+          <p v-else class="text-caption text-silver-mist">还没有备份。</p>
+        </div>
+      </article>
+    </section>
+
+    <!-- ==================== 外部集成 ==================== -->
+    <section class="settings-section">
+      <div class="section-eyebrow">
+        <span class="section-tick section-tick--api" />
+        <span class="section-label">外部集成</span>
+        <span class="section-rule" />
+      </div>
+
+      <article class="settings-card settings-card--api">
+        <div class="settings-card-rail" />
+        <div class="settings-card-body">
+          <header class="settings-card-head">
+            <h3 class="settings-card-title">HTTP API</h3>
+            <n-tag size="small" type="info">本地 127.0.0.1</n-tag>
+          </header>
+          <p class="settings-card-desc">
+            应用在 127.0.0.1 暴露本地 HTTP API，给浏览器扩展、脚本等外部工具查询本库。除 <code>/api/health</code> 外所有路由都需要 <code>Authorization: Bearer &lt;token&gt;</code> 鉴权（见上方「HTTP Token」）。
           </p>
-          <div class="mb-2">
-            <span>接口地址: </span>
-            <n-tag type="success">{{ store.apiBase }}</n-tag>
-            <n-button size="tiny" class="ml-2" @click="copy(store.apiBase)">
-              Copy
+
+          <div class="api-base">
+            <span class="api-base-label">接口地址</span>
+            <n-code :code="store.apiBase" class="api-base-url" />
+            <n-button size="tiny" @click="copy(store.apiBase)">
+              <template #icon><ClipboardCopy :size="12" :stroke-width="1.8" /></template>
+              复制
             </n-button>
           </div>
-          <n-divider class="my-3!" />
-          <div class="font-mono text-caption">
-            <div v-for="line in apiLines" :key="line" class="mb-1">
-              <n-code :code="line" />
-            </div>
-          </div>
-        </n-card>
 
-        <n-card title="扫描">
-          <p class="text-caption text-silver-mist">
-            后台监听 <code>resources/doujinshi/</code>，自动处理新放入的压缩包。如果你怀疑漏掉了某个文件，可以点下面手动扫描。
-          </p>
-          <n-space>
-            <n-button type="primary" @click="runScan">手动扫描入库冲突处理目录</n-button>
-            <n-tag v-if="scanResult !== null">上次处理: {{ scanResult }} 个</n-tag>
-          </n-space>
-        </n-card>
-      </n-space>
-    </n-spin>
+          <table class="api-table">
+            <thead>
+              <tr>
+                <th class="col-method">METHOD</th>
+                <th class="col-path">PATH</th>
+                <th class="col-note">描述</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr v-for="r in apiRoutes" :key="r.path">
+                <td class="col-method">
+                  <span class="method-tag" :data-method="r.method">{{ r.method }}</span>
+                </td>
+                <td class="col-path">
+                  <code class="api-path">{{ r.path }}</code>
+                </td>
+                <td class="col-note">{{ r.note }}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </article>
+    </section>
   </div>
 </template>
+
+<style scoped>
+/* ===== Section eyebrow ===== */
+.section-eyebrow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-top: 8px;
+}
+.section-tick {
+  width: 12px;
+  height: 2px;
+  background: var(--color-phosphor-green);
+  display: inline-block;
+}
+.section-tick--data { background: var(--color-archive-blue); }
+.section-tick--api { background: #a78bfa; }
+.section-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--color-snow);
+}
+.section-rule {
+  flex: 1;
+  height: 1px;
+  background: var(--surface-border);
+}
+
+/* ===== Settings card ===== */
+.settings-card {
+  position: relative;
+  background: var(--surface-card);
+  border: 1px solid var(--surface-border);
+  border-radius: var(--radius-cards);
+  display: flex;
+  overflow: hidden;
+}
+.settings-card-rail {
+  width: 4px;
+  flex-shrink: 0;
+  background: var(--color-phosphor-green);
+}
+.settings-card--data .settings-card-rail { background: var(--color-archive-blue); }
+.settings-card--api  .settings-card-rail { background: #a78bfa; }
+
+.settings-card-body {
+  flex: 1;
+  min-width: 0;
+  padding: 20px 24px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.settings-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+.settings-card-title {
+  font-size: 16px;
+  font-weight: 500;
+  color: var(--color-snow);
+  letter-spacing: var(--tracking-body);
+  margin: 0;
+}
+.settings-card-desc {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--color-silver-mist);
+  margin: 0;
+}
+.settings-card-desc :deep(code) {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  padding: 1px 6px;
+  border-radius: 4px;
+  background: var(--color-ash);
+  color: var(--color-snow);
+}
+.settings-card-controls {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.settings-card-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--surface-border);
+}
+
+/* ===== Control grid ===== */
+.control-grid {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.control-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-smoke);
+  min-width: 64px;
+}
+.control-input {
+  flex: 1;
+  min-width: 0;
+}
+
+/* ===== Path list ===== */
+.path-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.path-row {
+  display: grid;
+  grid-template-columns: 96px 1fr;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 0;
+  border-bottom: 1px dashed var(--surface-border);
+}
+.path-row:last-child { border-bottom: none; }
+.path-key {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  color: var(--color-smoke);
+  text-transform: uppercase;
+}
+.path-value {
+  font-size: 12px;
+  color: var(--color-snow);
+  overflow-x: auto;
+  white-space: nowrap;
+}
+
+/* ===== Snapshot list ===== */
+.snapshot-list {
+  margin-top: 8px;
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  overflow: hidden;
+}
+.snapshot-head,
+.snapshot-row {
+  display: grid;
+  grid-template-columns: 1fr 80px 132px;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 12px;
+}
+.snapshot-head {
+  background: var(--color-ash);
+  border-bottom: 1px solid var(--surface-border);
+}
+.snapshot-head > span {
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--color-smoke);
+}
+.snapshot-body {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.snapshot-row {
+  border-bottom: 1px solid var(--surface-border);
+}
+.snapshot-row:last-child { border-bottom: none; }
+.snapshot-row:hover { background: var(--color-ash); }
+.snapshot-row .col-act {
+  display: flex;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+/* ===== API table ===== */
+.api-base {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  background: var(--color-ash);
+  border: 1px solid var(--surface-border);
+  border-radius: 8px;
+}
+.api-base-label {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--color-smoke);
+  white-space: nowrap;
+}
+.api-base-url { flex: 1; min-width: 0; }
+
+.api-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  border: 1px solid var(--surface-border);
+  border-radius: 10px;
+  overflow: hidden;
+  font-size: 12px;
+}
+.api-table th,
+.api-table td {
+  text-align: left;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--surface-border);
+  vertical-align: middle;
+}
+.api-table th {
+  background: var(--color-ash);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.15em;
+  text-transform: uppercase;
+  color: var(--color-smoke);
+  font-weight: 500;
+}
+.api-table tr:last-child td { border-bottom: none; }
+.api-table tr:hover td { background: var(--color-ash); }
+
+.col-method { width: 80px; }
+.col-path   { width: 320px; }
+.col-note   { color: var(--color-silver-mist); }
+
+.method-tag {
+  display: inline-block;
+  font-family: var(--font-mono);
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--color-forest-depth);
+  color: var(--color-phosphor-green);
+}
+.method-tag[data-method="POST"] { background: #2e1f4b; color: #c4b5fd; }
+
+.api-path {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  color: var(--color-snow);
+  background: transparent;
+  padding: 0;
+}
+</style>
