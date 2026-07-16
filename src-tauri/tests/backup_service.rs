@@ -8,7 +8,7 @@
 use doujinshi_records::db;
 use doujinshi_records::services::backup::{
     backup_filename, clear_restore_marker, hash_db_file, read_restore_marker, write_restore_marker,
-    BackupConfig, BackupService, BackupStorage, DbSettingsHandle, LocalFsStorage, RestorePending,
+    BackupConfig, BackupService, BackupStorage, LocalFsStorage, RestorePending,
     SettingsHandle,
 };
 use sea_orm::{ActiveModelTrait, EntityTrait, Set};
@@ -33,10 +33,10 @@ fn backup_config_serde_round_trip() {
 
 #[test]
 fn backup_filename_compact_rfc3339() {
-    let ts = chrono::DateTime::parse_from_rfc3339("2026-07-15T18:30:45Z")
+    let ts = chrono::DateTime::parse_from_rfc3339("2026-07-15T18:30:45.123Z")
         .unwrap()
         .with_timezone(&chrono::Utc);
-    assert_eq!(backup_filename(ts), "data-2026-07-15T18-30-45Z.db");
+    assert_eq!(backup_filename(ts), "data-2026-07-15T18-30-45.123Z.db");
 }
 
 #[test]
@@ -45,7 +45,19 @@ fn backup_filename_uses_utc() {
     let ts_local = chrono::DateTime::parse_from_rfc3339("2026-07-15T10:30:45-08:00")
         .unwrap()
         .with_timezone(&chrono::Utc);
-    assert_eq!(backup_filename(ts_local), "data-2026-07-15T18-30-45Z.db");
+    assert_eq!(backup_filename(ts_local), "data-2026-07-15T18-30-45.000Z.db");
+}
+
+#[test]
+fn backup_filename_unique_within_same_second() {
+    // 毫秒精度让连续两次 backup 落在不同时分秒但同秒时也能区分
+    let ts1 = chrono::DateTime::parse_from_rfc3339("2026-07-15T18:30:45.001Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    let ts2 = chrono::DateTime::parse_from_rfc3339("2026-07-15T18:30:45.999Z")
+        .unwrap()
+        .with_timezone(&chrono::Utc);
+    assert_ne!(backup_filename(ts1), backup_filename(ts2));
 }
 
 #[test]
@@ -239,31 +251,62 @@ async fn list_backups_returns_sorted_snapshots() {
 }
 
 /// 测试 helper：建一个真 SQLite + 真 DbSettingsHandle 拼的 BackupService。
-async fn make_svc_with_db(tmp: &std::path::Path) -> BackupService {
+/// 返回 `BackupService` 和 `Arc<DatabaseConnection>`（helper 改成顶级 fn 后调用方
+/// 各自 manage 连接生命周期；这里采用 owned Arc 方式）。
+async fn make_svc_with_db(tmp: &std::path::Path) -> (BackupService, Arc<sea_orm::DatabaseConnection>) {
     use std::path::PathBuf;
     let conn = db::connect(&tmp.join("data.db")).await.unwrap();
     db::migrations::init_schema_versioned(&conn).await.unwrap();
-    BackupService::new_with_db(
+    let conn_arc = Arc::new(conn);
+    let svc = BackupService::new_with_db(
         PathBuf::from(tmp.join("data.db")),
         PathBuf::from(tmp.join("backups")),
-        Arc::new(conn),
-    )
+        conn_arc.clone(),
+    );
+    (svc, conn_arc)
+}
+
+/// 在测试 DB 插 N 条最小 doujinshi 行（用于「让 DB 内容 hash 变化」的 helper）。
+/// 用全局 AtomicUsize 防 hash UNIQUE 冲突。返回值是插完后总行数。
+async fn insert_rows(conn: &sea_orm::DatabaseConnection, n: usize) -> usize {
+    use doujinshi_records::db::entities::doujinshi_file;
+    static COUNTER: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let now = chrono::Utc::now();
+    for _ in 0..n {
+        let i = COUNTER.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let am = doujinshi_file::ActiveModel {
+            title: Set(format!("test-{i}")),
+            filename: Set(format!("f{i}.zip")),
+            hash: Set(format!("h{i}")),
+            ext: Set("zip".into()),
+            size_bytes: Set(0),
+            status: Set("in_library".into()),
+            file_state: Set("present".into()),
+            last_seen_path: Set("/x".into()),
+            created_at: Set(now),
+            updated_at: Set(now),
+            ..Default::default()
+        };
+        am.insert(conn).await.unwrap();
+    }
+    COUNTER.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 #[tokio::test]
 async fn backup_now_writes_via_vacuum_into() {
     let dir = tempfile::tempdir().unwrap();
-    let svc = make_svc_with_db(dir.path()).await;
+    let (svc, conn) = make_svc_with_db(dir.path()).await;
+    insert_rows(&conn, 3).await;
 
     let result = svc.backup_now().await.unwrap();
     assert!(result.path.exists(), "backup file should exist");
     assert!(result.size_bytes > 0);
 
-    // 验证备份文件是有效 SQLite
+    // 验证备份文件是有效 SQLite 且含原数据
     let backup_conn = db::connect(&result.path).await.unwrap();
     use doujinshi_records::db::entities::doujinshi_file;
     let rows = doujinshi_file::Entity::find().all(&backup_conn).await.unwrap();
-    assert_eq!(rows.len(), 0); // 新 DB 无数据
+    assert_eq!(rows.len(), 3);
 }
 
 #[tokio::test]
@@ -272,16 +315,18 @@ async fn backup_now_atomic_no_half_files_on_failure() {
     let backup_dir = dir.path().join("backups");
     std::fs::create_dir_all(&backup_dir).unwrap();
 
-    // db_path 指向不存在的文件——VACUUM INTO 会失败
+    // db_path 指向一个目录而非文件——任何打开 SQLite 的尝试都会失败。
+    // （早期版本用 nonexistent.db，但 db::connect 走 rwc 模式会自动建空库，
+    //  不能触发失败路径）
     let svc = BackupService::new(
-        dir.path().join("nonexistent.db"),
+        dir.path().to_path_buf(),
         backup_dir.clone(),
         Arc::new(LocalFsStorage),
         Arc::new(FakeSettings::new()),
     );
 
     let result = svc.backup_now().await;
-    assert!(result.is_err());
+    assert!(result.is_err(), "以目录作 db_path 应触发失败");
 
     // 备份目录不应残留 .tmp-* 或半截 .db
     let entries: Vec<_> = std::fs::read_dir(&backup_dir)
@@ -289,4 +334,92 @@ async fn backup_now_atomic_no_half_files_on_failure() {
         .filter_map(Result::ok)
         .collect();
     assert!(entries.is_empty(), "no half-files should remain");
+}
+
+#[tokio::test]
+async fn backup_now_skips_when_content_unchanged() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, _conn) = make_svc_with_db(dir.path()).await;
+    let backup_dir = dir.path().join("backups");
+
+    let r1 = svc.backup_now().await.unwrap();
+    assert!(r1.skipped.is_none());
+
+    let r2 = svc.backup_now().await.unwrap();
+    assert_eq!(r2.skipped.as_deref(), Some("content unchanged"));
+    assert_eq!(r2.md5, r1.md5);
+
+    let snapshots = LocalFsStorage.list_snapshots(&backup_dir).unwrap();
+    assert_eq!(snapshots.len(), 1);
+}
+
+#[tokio::test]
+async fn backup_now_creates_new_when_content_changed() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, conn) = make_svc_with_db(dir.path()).await;
+    let backup_dir = dir.path().join("backups");
+
+    svc.backup_now().await.unwrap();
+    // 改 DB 内容（SeaORM insert）
+    insert_rows(&conn, 1).await;
+
+    let r2 = svc.backup_now().await.unwrap();
+    assert!(r2.skipped.is_none());
+
+    let snapshots = LocalFsStorage.list_snapshots(&backup_dir).unwrap();
+    assert_eq!(snapshots.len(), 2);
+}
+
+#[tokio::test]
+async fn backup_now_trims_to_retention_count() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, conn) = make_svc_with_db(dir.path()).await;
+    svc.set_config(Some(""), 2).await.unwrap();
+    let backup_dir = dir.path().join("backups");
+
+    // 4 次不同内容：每次 insert 一行让 source hash 变化
+    for _ in 0..4 {
+        insert_rows(&conn, 1).await;
+        svc.backup_now().await.unwrap();
+    }
+
+    let snapshots = LocalFsStorage.list_snapshots(&backup_dir).unwrap();
+    assert_eq!(snapshots.len(), 2, "retention=2 应只留最新 2 个");
+}
+
+#[tokio::test]
+async fn backup_now_retention_zero_keeps_all() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, conn) = make_svc_with_db(dir.path()).await;
+    svc.set_config(Some(""), 0).await.unwrap();
+    let backup_dir = dir.path().join("backups");
+    use doujinshi_records::db::entities::doujinshi_file;
+    use sea_orm::EntityTrait;
+
+    for _ in 0..3 {
+        insert_rows(&conn, 1).await;
+        svc.backup_now().await.unwrap();
+    }
+
+    let snapshots = LocalFsStorage.list_snapshots(&backup_dir).unwrap();
+    assert_eq!(snapshots.len(), 3);
+}
+
+#[tokio::test]
+async fn backup_now_serializes_concurrent_callers() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, _conn) = make_svc_with_db(dir.path()).await;
+    let svc = Arc::new(svc);
+
+    let s1 = svc.clone();
+    let s2 = svc.clone();
+    let h1 = tokio::spawn(async move { s1.backup_now().await });
+    let h2 = tokio::spawn(async move { s2.backup_now().await });
+    let (r1, r2) = tokio::join!(h1, h2);
+
+    let results = vec![r1.unwrap(), r2.unwrap()];
+    let oks = results.iter().filter(|r| r.is_ok()).count();
+    let errs = results.iter().filter(|r| r.is_err()).count();
+    assert_eq!(oks, 1, "恰好一个应成功");
+    assert_eq!(errs, 1, "另一个应失败");
 }

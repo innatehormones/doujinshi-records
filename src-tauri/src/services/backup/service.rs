@@ -18,7 +18,7 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use super::storage::{BackupStorage, LocalFsStorage, SnapshotInfo};
-use super::{backup_filename, hash_db_file, BackupConfig};
+use super::{backup_filename, hash_db_file, read_backup_state, write_backup_state, BackupConfig};
 
 /// `BackupResult` —— `backup_now` 返回。
 /// `skipped: Some(reason)` 表示本次因内容未变而跳过。
@@ -147,12 +147,13 @@ impl BackupService {
     ///
     /// 流程：
     /// 1. `try_lock inflight`——并发 caller 立刻拿到 Err("already in progress")
-    /// 2. 读 config + 算当前 BLAKE3
-    /// 3. dedup：跟上次 MD5 一致则只 touch last_at，返回 `skipped = "content unchanged"`
-    /// 4. 不一致：VACUUM INTO `.tmp-<uuid>.db` → 算 size → fs::rename 到 final path
+    /// 2. 强制 WAL checkpoint（保证 .db 文件含已 commit 数据，下一步 hash_db_file 才能看到）
+    /// 3. 读 config + 算当前 BLAKE3
+    /// 4. dedup：跟上次 MD5 一致则只 touch last_at，返回 `skipped = "content unchanged"`
+    /// 5. 不一致：VACUUM INTO `.tmp-<uuid>.db` → 算 size → fs::rename 到 final path
     ///    （同 fs 下 rename 原子；跨设备场景后续 task 加 copy fallback）
-    /// 5. 写 backup_last_md5 + touch backup_last_at
-    /// 6. retention 清理：保留最新 N 个，其余删
+    /// 6. 写 backup_last_md5 + touch backup_last_at
+    /// 7. retention 清理：保留最新 N 个，其余删
     pub async fn backup_now(&self) -> anyhow::Result<BackupResult> {
         let _guard = self.inflight.try_lock().map_err(|_| {
             anyhow::anyhow!("backup already in progress")
@@ -163,16 +164,23 @@ impl BackupService {
         let dir = self.resolve_backup_dir(&cfg);
         std::fs::create_dir_all(&dir)?;
 
-        // 2. 当前 MD5
+        // 2. 强制 WAL checkpoint，让 .db 文件含已 commit 数据
+        //    （否则 hash_db_file 读到的是合并前的状态，跟 VACUUM 看到的视图不一致）
+        self.checkpoint_wal().await?;
+
+        // 3. 当前 MD5
         let current_md5 = hash_db_file(&self.db_path)?;
 
-        // 3. dedup：内容未变则 skip
-        let last_md5 = self.settings.read("backup_last_md5").await?;
-        if last_md5.as_deref() == Some(&current_md5) {
+        // 4. dedup：内容未变则 skip
+        let state = read_backup_state(&dir).await?;
+        if state.last_md5 == current_md5 && !state.last_md5.is_empty() {
             let snapshots = self.storage.list_snapshots(&dir)?;
             let last_path = snapshots.first().map(|s| s.path.clone());
             let last_size = snapshots.first().map(|s| s.size_bytes).unwrap_or(0);
-            self.touch_last_at().await?;
+            // touch last_at（避免自动备份误判）
+            let mut state = state;
+            state.last_at = chrono::Utc::now().to_rfc3339();
+            write_backup_state(&dir, &state).await?;
             return Ok(BackupResult {
                 path: last_path.unwrap_or(dir.join("(none)")),
                 size_bytes: last_size,
@@ -181,7 +189,7 @@ impl BackupService {
             });
         }
 
-        // 4. VACUUM INTO tmp → rename 到 final
+        // 5. VACUUM INTO tmp → rename 到 final
         let now = chrono::Utc::now();
         let final_path = dir.join(backup_filename(now));
         let tmp_path = dir.join(format!(".tmp-{}.db", Uuid::new_v4()));
@@ -189,20 +197,43 @@ impl BackupService {
         let tmp_size = std::fs::metadata(&tmp_path)?.len();
         std::fs::rename(&tmp_path, &final_path)?;
 
-        // 5. 算 final 的 MD5（同 tmp；rename 不改内容）+ 写 settings
-        let new_md5 = hash_db_file(&final_path)?;
-        self.settings.write("backup_last_md5", &new_md5).await?;
-        self.touch_last_at().await?;
+        // 6. dedup key 用 source hash（不是 backup file hash——
+        //    VACUUM INTO 每次可能产生不同字节布局，但 source content 稳定）；
+        //    bookkeeping 用 sidecar JSON 而非 app_setting——避免改 DB 文件导致 dedup 失效
+        let mut state = read_backup_state(&dir).await?;
+        state.last_md5 = current_md5.clone();
+        state.last_at = chrono::Utc::now().to_rfc3339();
+        write_backup_state(&dir, &state).await?;
 
-        // 6. retention 清理
+        // 7. retention 清理
         self.apply_retention(&dir, cfg.retention_count)?;
 
         Ok(BackupResult {
             path: final_path,
             size_bytes: tmp_size,
-            md5: new_md5,
+            md5: current_md5,
             skipped: None,
         })
+    }
+
+    /// 强制 WAL checkpoint：保证 .db 文件含已 commit 数据。
+    /// 用单独短连接，只跑 checkpoint 不阻塞常驻 app 连接。
+    async fn checkpoint_wal(&self) -> anyhow::Result<()> {
+        let conn = crate::db::connect(&self.db_path).await?;
+        let backend = conn.get_database_backend();
+        // 设 journal_mode=TRUNCATE 持久化（DELETE 也可，但 TRUNCATE 把 -wal 也截短）
+        conn.execute(Statement::from_string(
+            backend,
+            "PRAGMA journal_mode=TRUNCATE".to_string(),
+        ))
+        .await?;
+        // 强制 checkpoint 把 WAL 内容写回 .db
+        conn.execute(Statement::from_string(
+            backend,
+            "PRAGMA wal_checkpoint(TRUNCATE)".to_string(),
+        ))
+        .await?;
+        Ok(())
     }
 
     /// 用单独打开的临时连接做 VACUUM INTO，避免阻塞常驻 app 连接。
@@ -212,12 +243,6 @@ impl BackupService {
         let escaped = dst.to_string_lossy().replace('\'', "''");
         let sql = format!("VACUUM INTO '{}'", escaped);
         conn.execute(Statement::from_string(conn.get_database_backend(), sql)).await?;
-        Ok(())
-    }
-
-    async fn touch_last_at(&self) -> anyhow::Result<()> {
-        let now = chrono::Utc::now().to_rfc3339();
-        self.settings.write("backup_last_at", &now).await?;
         Ok(())
     }
 

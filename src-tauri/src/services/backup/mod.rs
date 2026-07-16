@@ -29,10 +29,10 @@ impl Default for BackupConfig {
     }
 }
 
-/// 生成备份文件名 `data-{RFC3339 紧凑}.db`。紧凑版去冒号，保证文件名安全。
+/// 生成备份文件名 `data-{RFC3339 紧凑}.db`。紧凑版去冒号，加毫秒防同秒覆盖。
 /// 始终用 UTC：跨时区机器还原时文件名一致，避免命名混乱。
 pub fn backup_filename(ts: chrono::DateTime<chrono::Utc>) -> String {
-    format!("data-{}.db", ts.format("%Y-%m-%dT%H-%M-%SZ"))
+    format!("data-{}.db", ts.format("%Y-%m-%dT%H-%M-%S%.3fZ"))
 }
 
 /// 整文件读入 + BLAKE3。DB 规模 KB~MB 级，全文读入 + BLAKE3（项目最熟路径）
@@ -68,4 +68,37 @@ pub fn read_restore_marker(path: &Path) -> anyhow::Result<Option<RestorePending>
 
 pub fn clear_restore_marker(path: &Path) {
     let _ = std::fs::remove_file(path);
+}
+
+/// Backup bookkeeping（不能放 app_setting：写入会改 DB 文件，破坏 dedup 的 hash 比对）。
+/// 写在 `<backup_dir>/backup_state.json`，每次 backup_now 末更新。
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]
+pub struct BackupState {
+    #[serde(default)]
+    pub last_md5: String,
+    #[serde(default)]
+    pub last_at: String,
+}
+
+pub async fn read_backup_state(dir: &Path) -> anyhow::Result<BackupState> {
+    let path = dir.join("backup_state.json");
+    if !path.exists() {
+        return Ok(BackupState::default());
+    }
+    let text = std::fs::read_to_string(&path)?;
+    if text.trim().is_empty() {
+        return Ok(BackupState::default());
+    }
+    Ok(serde_json::from_str(&text)?)
+}
+
+pub async fn write_backup_state(dir: &Path, state: &BackupState) -> anyhow::Result<()> {
+    std::fs::create_dir_all(dir)?;
+    let path = dir.join("backup_state.json");
+    let json = serde_json::to_string_pretty(state)?;
+    // 原子写：tmp + rename，避免半截被读到
+    let tmp = dir.join(".backup_state.json.tmp");
+    std::fs::write(&tmp, json)?;
+    std::fs::rename(&tmp, &path)?;
+    Ok(())
 }
