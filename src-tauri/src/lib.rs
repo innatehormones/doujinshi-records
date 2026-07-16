@@ -201,6 +201,7 @@ pub async fn run(cfg: config::AppConfig, conn: DatabaseConnection) {
         })
         .manage(state)
         .manage(http::Port(port))
+        .manage(backup.clone())
         .invoke_handler(tauri::generate_handler![
             commands::library::list_library,
             commands::library::top_circles,
