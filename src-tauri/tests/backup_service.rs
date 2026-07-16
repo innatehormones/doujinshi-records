@@ -593,3 +593,55 @@ async fn should_auto_backup_treats_unparseable_last_at_as_old() {
     let s = _rbs(&backup_dir).await.unwrap();
     assert_eq!(s.last_at, "garbage");
 }
+
+// ─── End-to-end backup → modify → restore ────────────────────────────────
+
+#[tokio::test]
+async fn end_to_end_backup_modify_restore() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, conn) = make_svc_with_db(dir.path()).await;
+    let db_path = dir.path().join("data.db");
+
+    // 1. 初始备份：1 行
+    insert_rows(&conn, 1).await;
+    let r1 = svc.backup_now().await.unwrap();
+    assert!(r1.skipped.is_none());
+
+    // 2. 改动后再备：2 行
+    insert_rows(&conn, 1).await;
+    let r2 = svc.backup_now().await.unwrap();
+    assert!(r2.skipped.is_none());
+    assert_ne!(r1.path, r2.path);
+
+    let snaps = svc.list_backups().await.unwrap();
+    assert_eq!(snaps.len(), 2);
+    // mtime 倒序：r2 是更新的
+    assert_eq!(snaps[0].path, r2.path);
+    let newer = r2.path.clone();
+
+    // 3. 把 in-memory conn drop 再 stage_restore——保险起见避免文件 lock
+    drop(svc);
+    drop(conn);
+
+    let svc2 = BackupService::new_with_db(
+        db_path.clone(),
+        dir.path().join("backups"),
+        Arc::new(db::connect(&db_path).await.unwrap()),
+    );
+    svc2.stage_restore(&newer).await.unwrap();
+
+    // 4. 模拟启动期 apply
+    let marker = dir.path().join(".restore-pending.json");
+    let result = apply_pending_restore(&db_path, &marker).await.unwrap();
+    let newer_str = newer.to_string_lossy().into_owned();
+    assert_eq!(result.as_deref(), Some(newer_str.as_str()));
+
+    // 5. 内容已换成 newer 快照（2 行）
+    let after = db::connect(&db_path).await.unwrap();
+    use doujinshi_records::db::entities::doujinshi_file;
+    let count = doujinshi_file::Entity::find().all(&after).await.unwrap().len();
+    assert_eq!(count, 2, "restore 后 DB 应回到 2 行快照");
+
+    // 6. marker 已清
+    assert!(!marker.exists());
+}

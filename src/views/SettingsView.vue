@@ -2,10 +2,11 @@
 import { ref, onMounted, computed, watch } from "vue"
 import {
   NCard, NSpace, NButton, NTag, NSpin, useMessage, NCode, NDivider,
-  NInputNumber, NSwitch,
+  NInputNumber, NSwitch, NInput, NPopconfirm,
 } from "naive-ui"
 import { useSettingsStore } from "@/stores"
 import { api } from "@/api/tauri"
+import type { BackupConfig, BackupSnapshot } from "@/types/api"
 
 const store = useSettingsStore()
 const message = useMessage()
@@ -14,6 +15,13 @@ const scanning = ref(false)
 
 const portInput = ref<number>(0)
 const portLocked = ref(false)
+
+// 备份状态
+const backupCfg = ref<BackupConfig | null>(null)
+const backupDirInput = ref<string>("")
+const retentionInput = ref<number>(10)
+const snapshots = ref<BackupSnapshot[]>([])
+const backingUp = ref(false)
 
 onMounted(() => store.load())
 
@@ -27,6 +35,24 @@ watch(
   },
   { immediate: true },
 )
+
+watch(
+  () => store.data,
+  (d) => {
+    if (d) loadBackup()
+  },
+)
+
+async function loadBackup() {
+  const [cfg, list] = await Promise.all([
+    api.getBackupConfig(),
+    api.listBackups(),
+  ])
+  backupCfg.value = cfg
+  backupDirInput.value = cfg.dir
+  retentionInput.value = cfg.retention_count
+  snapshots.value = list
+}
 
 async function copy(text: string) {
   try {
@@ -59,6 +85,52 @@ async function regenToken() {
   await store.load()
   message.success("Token 已重新生成，旧 Token 立刻失效")
   await copy(newToken)
+}
+
+async function saveBackupConfig() {
+  try {
+    await api.setBackupConfig(backupDirInput.value || null, retentionInput.value)
+    message.success("备份配置已保存")
+    await loadBackup()
+  } catch (e) {
+    message.error(String(e))
+  }
+}
+
+async function doBackupNow() {
+  backingUp.value = true
+  try {
+    const result = await api.backupNow()
+    if (result.skipped) {
+      message.info("内容未变，跳过")
+    } else {
+      message.success(`备份成功：${result.path}`)
+    }
+    await loadBackup()
+  } catch (e) {
+    message.error(String(e))
+  } finally {
+    backingUp.value = false
+  }
+}
+
+async function stageRestore(snap: BackupSnapshot) {
+  try {
+    await api.stageRestore(snap.path)
+    message.warning("已标记还原。请退出应用并重新启动生效。")
+  } catch (e) {
+    message.error(String(e))
+  }
+}
+
+async function deleteSnap(snap: BackupSnapshot) {
+  try {
+    await api.deleteBackup(snap.path)
+    message.success("已删除")
+    await loadBackup()
+  } catch (e) {
+    message.error(String(e))
+  }
 }
 
 const apiLines = computed(() => [
@@ -139,6 +211,58 @@ const apiLines = computed(() => [
             冲突处理压缩包放这里，应用会自动处理。
           </p>
           <n-input :value="store.data?.inbox_dir ?? ''" readonly />
+        </n-card>
+
+        <n-card title="数据备份">
+          <p class="text-caption text-silver-mist">
+            仅备份 data.db（不含压缩文件）。目录留空 = 默认 <code>resources/backups/</code>。
+            内容未变时会自动跳过；启动期超过 24h 没成功备份会自动补一次。
+          </p>
+          <n-space align="center" class="mt-2 flex-wrap">
+            <n-input
+              v-model:value="backupDirInput"
+              placeholder="默认目录"
+              class="min-w-[260px]"
+            />
+            <span class="text-caption text-silver-mist">目录</span>
+            <n-input-number
+              v-model:value="retentionInput"
+              :min="0"
+              :max="999"
+              placeholder="保留数"
+              class="w-[120px]"
+            />
+            <span class="text-caption text-silver-mist">保留最近 N 个（0 = 不限）</span>
+            <n-button type="primary" size="small" @click="saveBackupConfig">保存</n-button>
+          </n-space>
+          <n-space class="mt-3">
+            <n-button :loading="backingUp" @click="doBackupNow">立即备份</n-button>
+            <n-tag v-if="backupCfg" size="small">
+              当前：{{ backupCfg.dir || "默认目录" }}，保留 {{ backupCfg.retention_count }}
+            </n-tag>
+          </n-space>
+          <div v-if="snapshots.length === 0" class="mt-3 text-caption text-silver-mist">
+            还没有备份
+          </div>
+          <div v-else class="mt-3 grid gap-2">
+            <div
+              v-for="s in snapshots"
+              :key="s.path"
+              class="flex items-center gap-2 font-mono text-caption"
+            >
+              <span class="flex-1 truncate" :title="s.path">{{ s.path }}</span>
+              <n-tag size="small">{{ Math.round(s.size_bytes / 1024) }} KB</n-tag>
+              <n-button size="tiny" type="warning" @click="stageRestore(s)">
+                恢复
+              </n-button>
+              <n-popconfirm @positive-click="deleteSnap(s)">
+                <template #trigger>
+                  <n-button size="tiny" type="error">删除</n-button>
+                </template>
+                确认删除该快照？无法恢复。
+              </n-popconfirm>
+            </div>
+          </div>
         </n-card>
 
         <n-card title="HTTP API（供浏览器扩展使用）">

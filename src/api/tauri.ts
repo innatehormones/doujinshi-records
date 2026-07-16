@@ -10,6 +10,9 @@ import type {
   CircleCount,
   ScanStatus,
   ReparseResult,
+  BackupConfig,
+  BackupSnapshot,
+  BackupResult,
 } from "@/types/api"
 
 export const api = {
@@ -54,5 +57,12 @@ export const api = {
   regenerateAuthToken: () => invoke<string>("regenerate_auth_token"),
   setHttpPort: (port: number) => invoke<void>("set_http_port", { port }),
   forceExtract: (path: string) => invoke<void>("force_extract", { path }),
+  getBackupConfig: () => invoke<BackupConfig>("get_backup_config"),
+  setBackupConfig: (dir: string | null, retentionCount: number) =>
+    invoke<void>("set_backup_config", { dir, retentionCount }),
+  listBackups: () => invoke<BackupSnapshot[]>("list_backups"),
+  backupNow: () => invoke<BackupResult>("backup_now"),
+  stageRestore: (src: string) => invoke<void>("stage_restore", { src }),
+  deleteBackup: (snapshot: string) => invoke<void>("delete_backup", { snapshot }),
 }
 

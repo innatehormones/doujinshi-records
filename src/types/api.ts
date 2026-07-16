@@ -163,3 +163,26 @@ export interface ScanStatus {
   failed: number
 }
 
+/// 备份配置：与 Rust `BackupConfig` 一一对应。`dir=""` 表示用默认目录。
+export interface BackupConfig {
+  dir: string
+  retention_count: number
+}
+
+/// 单条备份快照：与 Rust `SnapshotInfo` 一一对应。
+export interface BackupSnapshot {
+  path: string
+  size_bytes: number
+  /// RFC3339 字符串（atime）；前端直接展示，不解析
+  mtime: string
+}
+
+/// `backup_now` 返回：与 Rust `BackupResult` 一一对应。
+/// `skipped` 非空表示本次因内容未变跳过。
+export interface BackupResult {
+  path: string
+  size_bytes: number
+  md5: string
+  skipped?: string
+}
+
