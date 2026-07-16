@@ -352,6 +352,33 @@ async fn backup_now_skips_when_content_unchanged() {
     assert_eq!(snapshots.len(), 1);
 }
 
+/// 回归：state 里记着 last_md5 但磁盘上没有 .db 快照（被外部删了，或 retention
+/// 误清），下一次 backup_now 不应一直返回 dedup 命中 —— 必须落回实际写文件路径，
+/// 否则用户看到的「内容未变，跳过」会变成永远写不出新备份。
+#[tokio::test]
+async fn backup_now_recovers_when_state_says_unchanged_but_file_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, _conn) = make_svc_with_db(dir.path()).await;
+    let backup_dir = dir.path().join("backups");
+
+    // 跑一次建立 state（这一份真的 .db 也会被下面再删，模拟「state 残留但文件没了」）
+    let r1 = svc.backup_now().await.unwrap();
+    assert!(r1.skipped.is_none());
+    assert!(r1.path.exists());
+
+    // 删掉 .db 但保留 state.json
+    std::fs::remove_file(&r1.path).unwrap();
+    assert!(!r1.path.exists());
+
+    // 第二次：内容未变（state.last_md5 == source MD5），但磁盘上无快照
+    let r2 = svc.backup_now().await.unwrap();
+    assert!(r2.skipped.is_none(), "should fall through and write, not skip");
+    assert!(r2.path.exists(), "新 .db 必须落盘");
+
+    let snapshots = LocalFsStorage.list_snapshots(&backup_dir).unwrap();
+    assert_eq!(snapshots.len(), 1);
+}
+
 #[tokio::test]
 async fn backup_now_creates_new_when_content_changed() {
     let dir = tempfile::tempdir().unwrap();

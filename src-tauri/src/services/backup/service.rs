@@ -214,10 +214,15 @@ impl BackupService {
         // 3. 当前 MD5
         let current_md5 = hash_db_file(&self.db_path)?;
 
-        // 4. dedup：内容未变则 skip
+        // 4. dedup：内容未变则 skip —— 但前提是磁盘上确实有上一份快照。
+        //    兜底：state.last_md5 与 source MD5 一致但 0 快照文件（被外部删除、
+        //    retention 误清等），不能一直跳过，否则永不再写新备份。
         let state = read_backup_state(&dir).await?;
-        if state.last_md5 == current_md5 && !state.last_md5.is_empty() {
-            let snapshots = self.storage.list_snapshots(&dir)?;
+        let snapshots = self.storage.list_snapshots(&dir)?;
+        if state.last_md5 == current_md5
+            && !state.last_md5.is_empty()
+            && snapshots.first().is_some()
+        {
             let last_path = snapshots.first().map(|s| s.path.clone());
             let last_size = snapshots.first().map(|s| s.size_bytes).unwrap_or(0);
             // touch last_at（避免自动备份误判）

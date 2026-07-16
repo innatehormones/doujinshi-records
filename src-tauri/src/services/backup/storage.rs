@@ -5,15 +5,16 @@
 //! commands 层完全不变。
 
 use anyhow::Result;
+use chrono::{DateTime, Utc};
 use serde::Serialize;
 use std::path::{Path, PathBuf};
-use std::time::SystemTime;
 
-/// 备份快照元信息（用于 UI 列表）
+/// 备份快照元信息（用于 UI 列表）。`mtime` 用 RFC3339 字符串而非
+/// `SystemTime`——后者在 serde 序列化成 `{secs,nanos}` 对象，前端期望字符串。
 #[derive(Debug, Clone, Serialize)]
 pub struct SnapshotInfo {
     pub path: PathBuf,
-    pub mtime: SystemTime,
+    pub mtime: String,
     pub size_bytes: u64,
 }
 
@@ -61,9 +62,19 @@ impl BackupStorage for LocalFsStorage {
                 continue;
             }
             let meta = entry.metadata()?;
+            let mtime = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| {
+                    DateTime::<Utc>::from_timestamp(d.as_secs() as i64, d.subsec_nanos())
+                        .map(|dt| dt.to_rfc3339())
+                })
+                .flatten()
+                .unwrap_or_default();
             out.push(SnapshotInfo {
                 path,
-                mtime: meta.modified().unwrap_or(SystemTime::UNIX_EPOCH),
+                mtime,
                 size_bytes: meta.len(),
             });
         }
