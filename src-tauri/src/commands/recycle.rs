@@ -12,7 +12,6 @@ use tauri::State;
 #[derive(Debug, Serialize)]
 pub struct RecyclePage {
     pub present: Page<file_summary::FileSummary>,
-    pub gone: Page<file_summary::FileSummary>,
 }
 
 #[tauri::command]
@@ -20,15 +19,16 @@ pub async fn list_recycle(
     state: State<'_, AppState>,
     present_limit: Option<u64>,
     present_offset: Option<u64>,
-    gone_limit: Option<u64>,
-    gone_offset: Option<u64>,
 ) -> AppResult<RecyclePage> {
-    // V4：按 status='recycle' + file_state 三态分组。
-    // deleted 不在这里（在 Library 过滤 status=deleted 里）。
+    // V4.6 简化：文件回收站只展示「待删除文件」（status='recycle' +
+    // file_state='present'）。原本按 file_state 三态分 present / gone
+    // 两段，gone 段（status='recycle' + file_state≠present）的记录现在
+    // 可在 Library 页面用 status filter（recycle / deleted）找到——
+    // permanent_delete_inner 永久删除时已经把 status 推到 'deleted'，
+    // 真正剩在 status='recycle' 但 file_state≠present 的只是 dirty_scanner
+    // 标记 missing 的少数边缘 case，不再专设 UI 段落。
     let present_limit = present_limit.unwrap_or(50);
     let present_offset = present_offset.unwrap_or(0);
-    let gone_limit = gone_limit.unwrap_or(50);
-    let gone_offset = gone_offset.unwrap_or(0);
 
     let present_q = doujinshi_file::Entity::find().filter(
         doujinshi_file::Column::Status
@@ -43,34 +43,17 @@ pub async fn list_recycle(
         .all(&state.conn)
         .await?;
 
-    let gone_q = doujinshi_file::Entity::find().filter(
-        doujinshi_file::Column::Status
-            .eq("recycle")
-            .and(doujinshi_file::Column::FileState.ne("present")),
-    );
-    let gone_total = gone_q.clone().count(&state.conn).await?;
-    let gone_rows = gone_q
-        .clone()
-        .offset(gone_offset)
-        .limit(gone_limit)
-        .all(&state.conn)
-        .await?;
-
-    let mut ids: Vec<i64> = present_rows.iter().chain(gone_rows.iter()).map(|m| m.id).collect();
-    ids.sort();
-    ids.dedup();
+    let ids: Vec<i64> = present_rows.iter().map(|m| m.id).collect();
     let conflict_map = file_summary::open_conflict_map(&state.conn, &ids).await;
-    let map_summaries = |rows: &[doujinshi_file::Model]| -> Vec<file_summary::FileSummary> {
-        rows.iter()
-            .map(|m| {
-                let has = conflict_map.get(&m.id).copied().unwrap_or(false);
-                file_summary::from_model_with_conflict_state(m, has)
-            })
-            .collect()
-    };
+    let items: Vec<file_summary::FileSummary> = present_rows
+        .iter()
+        .map(|m| {
+            let has = conflict_map.get(&m.id).copied().unwrap_or(false);
+            file_summary::from_model_with_conflict_state(m, has)
+        })
+        .collect();
     Ok(RecyclePage {
-        present: Page { items: map_summaries(&present_rows), total: present_total },
-        gone: Page { items: map_summaries(&gone_rows), total: gone_total },
+        present: Page { items, total: present_total },
     })
 }
 

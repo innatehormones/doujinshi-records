@@ -34,14 +34,10 @@ export const api = {
   listRecycle: (
     presentLimit?: number,
     presentOffset?: number,
-    goneLimit?: number,
-    goneOffset?: number,
   ) =>
     invoke<RecyclePage>("list_recycle", {
       presentLimit,
       presentOffset,
-      goneLimit,
-      goneOffset,
     }),
   permanentDelete: (id: number) => invoke<void>("permanent_delete", { id }),
   restoreFromRecycle: (id: number) => invoke<void>("restore_from_recycle", { id }),

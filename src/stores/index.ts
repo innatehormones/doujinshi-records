@@ -231,33 +231,20 @@ export const useRecycleStore = defineStore("recycle", () => {
   const present = ref<FileSummary[]>([])
   const presentTotal = ref(0)
   const presentPage = ref(1)
-  const gone = ref<FileSummary[]>([])
-  const goneTotal = ref(0)
-  const gonePage = ref(1)
   const loading = ref(false)
 
   const presentTotalPages = computed(() =>
     Math.max(1, Math.ceil(presentTotal.value / RECYCLE_PAGE_SIZE)),
   )
-  const goneTotalPages = computed(() =>
-    Math.max(1, Math.ceil(goneTotal.value / RECYCLE_PAGE_SIZE)),
-  )
   const showPresentPager = computed(() => presentTotalPages.value > 1)
-  const showGonePager = computed(() => goneTotalPages.value > 1)
 
   async function load() {
     loading.value = true
     try {
       const presentOffset = (presentPage.value - 1) * RECYCLE_PAGE_SIZE
-      const goneOffset = (gonePage.value - 1) * RECYCLE_PAGE_SIZE
-      const res = await api.listRecycle(
-        RECYCLE_PAGE_SIZE, presentOffset,
-        RECYCLE_PAGE_SIZE, goneOffset,
-      )
+      const res = await api.listRecycle(RECYCLE_PAGE_SIZE, presentOffset)
       present.value = res.present.items
       presentTotal.value = res.present.total
-      gone.value = res.gone.items
-      goneTotal.value = res.gone.total
     } finally {
       loading.value = false
     }
@@ -270,21 +257,13 @@ export const useRecycleStore = defineStore("recycle", () => {
     await load()
   }
 
-  async function gotoGonePage(p: number) {
-    const target = Math.min(Math.max(1, p), goneTotalPages.value)
-    if (target === gonePage.value) return
-    gonePage.value = target
-    await load()
-  }
-
   async function permanentDelete(id: number) {
     await api.permanentDelete(id)
-    const f = present.value.find((f) => f.id === id)
-    if (f) {
-      f.file_state = "absent_confirmed"
-      gone.value.push(f)
-      present.value = present.value.filter((x) => x.id !== id)
-    }
+    // 后端把 status 推到 'deleted' + file_state='absent_confirmed'，
+    // 跟本页签（status='recycle' + file_state='present'）过滤不匹配。
+    // 本地直接从 present 里删，避免下次 load 之前还显示在「待删除文件」。
+    present.value = present.value.filter((x) => x.id !== id)
+    presentTotal.value = Math.max(0, presentTotal.value - 1)
   }
 
   async function restore(id: number) {
@@ -294,9 +273,7 @@ export const useRecycleStore = defineStore("recycle", () => {
 
   return {
     present, presentTotal, presentPage, presentTotalPages, showPresentPager,
-    gone, goneTotal, gonePage, goneTotalPages, showGonePager,
-    loading, load,
-    gotoPresentPage, gotoGonePage,
+    loading, load, gotoPresentPage,
     permanentDelete, restore,
   }
 })

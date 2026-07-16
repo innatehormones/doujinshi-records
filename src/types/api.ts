@@ -125,11 +125,12 @@ export interface Page<T> {
   total: number
 }
 
-/// 文件回收站首页专属 shape：present（硬盘还有）+ gone（已清走）。
-/// 两段各自独立分页，各自的 total 独立计算。
+/// 文件回收站首页专属 shape：V4.6 起只展示「待删除文件」
+/// （status='recycle' + file_state='present'）。原本按 file_state 三态
+/// 分 present / gone 两段，gone 段已移除——对应记录可在 Library 用
+/// status filter（recycle / deleted）找到。
 export interface RecyclePage {
   present: Page<FileSummary>
-  gone: Page<FileSummary>
 }
 
 /// Library 顶部社团 chip：按文件数倒序，独立端点而不是从当前页聚合。

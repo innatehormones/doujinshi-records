@@ -19,7 +19,7 @@
 - 启动时脏数据扫描：扫 4 个状态目录（不扫 deleted），按 file_state 三态更新
 - 脏数据页对 `orphan_file` 条目提供「重新入库」按钮：mover-only，`fs::rename` 到 inbox + 软删 dirty_data 行，剩下的入库由后台 scanner 接管（UI 立即返回，撞名 / rar 失败由 ConflictView / rar-error 兜底）
 - 文件名冲突检测：停在 Inbox，等用户决定跳过或比对；冲突 ReplaceB 把旧记录推到 `deleted + absent_confirmed`（不是终态，可恢复）
-- 文件回收站视图：按 `file_state` 分 present / gone 两段；还原 + 永久删除
+- 文件回收站视图：V4.6 起只展示「待删除文件」（`status='recycle' + file_state='present'`），还原 / 永久删除；已被销毁的记录可在 Library 用 status filter（recycle / deleted）找到
 - 本地 HTTP API 供浏览器扩展（`/api/health`、`/api/doujinshi/...`）
 - 实时更新：扫描器 emit `library-updated` 事件，前端自动刷新
 
@@ -136,7 +136,7 @@ V4 在 V7 schema 之上做 3 处增量改动（均为非破坏性升级）：
 
 - Library 默认过滤从「active」（V4: 排除 recycle + deleted）→ 之前版本是「in_library」单值；切换过滤可见已删记录
 - 状态切换不再因源文件缺失而拒绝；可以手动把 missing 的 archived 切回 in_library
-- RecycleBin 现按 `file_state` 分 present / gone 两段；missing 文件显示但不可还原
+- RecycleBin V4.6 起只展示「待删除文件」（按 `status='recycle' + file_state='present'` 过滤）；原本按 `file_state` 分 present / gone 两段，gone 段移除
 - DetailView 在文件丢失时显示 n-alert 提示
 
 ## 开发注意
