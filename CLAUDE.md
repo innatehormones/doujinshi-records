@@ -188,7 +188,7 @@ src/
 resources/                # 运行时数据（git 忽略）
 ├── doujinshi/            # inbox：等待入库识别（顶层 .zip/.rar，不递归子目录）
 ├── doujinshi-identified/ # 通常对应 status='in_library' 的文件存放位置
-├── doujinshi-will-delete/# 通常对应 status='recycle' 的文件存放位置（回收站）
+├── doujinshi-will-delete/# 通常对应 status='recycle' 的文件存放位置（文件回收站）
 ├── doujinshi-archived/   # 通常对应 status='archived' 的文件存放位置
 ├── covers/               # 抽取的封面（webp V3+，旧 V1/V2 是 jpg；HTTP 按 magic bytes 探测 mime；V7+ 文件名 .pwb）
 ├── _preview_cache/       # LRU 缩略图：<file_id>-<image_index>.webp

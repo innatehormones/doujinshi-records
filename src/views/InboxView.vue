@@ -57,7 +57,7 @@ function rarErrorTitle(kind: RarError["kind"]): string {
 <template>
   <div class="page">
     <header class="flex items-baseline justify-between gap-4">
-      <h1 class="text-heading-sm font-medium text-snow tracking-body">冲突处理</h1>
+      <h1 class="text-heading-sm font-medium text-snow tracking-body">入库冲突处理</h1>
       <span class="font-mono text-caption text-smoke tracking-[0.1em]">
         共 {{ store.total }} 个待处理
       </span>

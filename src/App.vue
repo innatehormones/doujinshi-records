@@ -53,8 +53,8 @@ function siderIcon(Icon: typeof Library) {
 
 const menuOptions = [
   { label: "我的同人志", key: "library", icon: siderIcon(Library) },
-  { label: "冲突处理", key: "inbox", icon: siderIcon(Inbox) },
-  { label: "回收站", key: "recycle", icon: siderIcon(Recycle) },
+  { label: "入库冲突处理", key: "inbox", icon: siderIcon(Inbox) },
+  { label: "文件回收站", key: "recycle", icon: siderIcon(Recycle) },
   { label: "脏数据", key: "dirty", icon: siderIcon(AlertTriangle) },
 ]
 

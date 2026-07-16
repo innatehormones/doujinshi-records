@@ -19,7 +19,7 @@
 - 启动时脏数据扫描：扫 4 个状态目录（不扫 deleted），按 file_state 三态更新
 - 脏数据页对 `orphan_file` 条目提供「重新入库」按钮：mover-only，`fs::rename` 到 inbox + 软删 dirty_data 行，剩下的入库由后台 scanner 接管（UI 立即返回，撞名 / rar 失败由 ConflictView / rar-error 兜底）
 - 文件名冲突检测：停在 Inbox，等用户决定跳过或比对；冲突 ReplaceB 把旧记录推到 `deleted + absent_confirmed`（不是终态，可恢复）
-- 回收站视图：按 `file_state` 分 present / gone 两段；还原 + 永久删除
+- 文件回收站视图：按 `file_state` 分 present / gone 两段；还原 + 永久删除
 - 本地 HTTP API 供浏览器扩展（`/api/health`、`/api/doujinshi/...`）
 - 实时更新：扫描器 emit `library-updated` 事件，前端自动刷新
 

@@ -81,7 +81,7 @@ function fmtSize(bytes: number): string {
 <template>
   <div class="page">
     <header class="flex items-baseline justify-between gap-4">
-      <h1 class="text-heading-sm font-medium text-snow tracking-body">回收站</h1>
+      <h1 class="text-heading-sm font-medium text-snow tracking-body">文件回收站</h1>
       <span class="font-mono text-caption text-smoke tracking-[0.1em]">
         共 {{ store.presentTotal + store.goneTotal }} 条
       </span>
@@ -97,7 +97,7 @@ function fmtSize(bytes: number): string {
 
         <n-empty
           v-if="!store.loading && store.presentTotal === 0"
-          description="回收站为空。"
+          description="文件回收站为空。"
           class="mt-4"
         />
 

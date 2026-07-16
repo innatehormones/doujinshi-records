@@ -16,7 +16,7 @@ function formatSize(bytes: number): string {
 function dirLabel(dir: string): string {
   switch (dir) {
     case "identified": return "入库目录"
-    case "will_delete": return "回收站"
+    case "will_delete": return "文件回收站"
     case "archived": return "归档"
     default: return dir
   }
@@ -39,7 +39,7 @@ async function onReingest(id: number) {
       <span class="font-mono text-caption text-smoke tracking-[0.1em]">共 {{ store.total }} 条</span>
     </header>
     <div class="rounded-cards border border-border bg-card px-5 py-4">
-      <p class="text-caption leading-[1.5] text-silver-mist">启动扫描发现：这些文件位于入库目录 / 回收站 / 归档目录，但数据库无对应行。手动清理，或者对入库目录里的孤儿文件点「重新入库」让 scanner 再走一次入库流程。</p>
+      <p class="text-caption leading-[1.5] text-silver-mist">启动扫描发现：这些文件位于入库目录 / 文件回收站 / 归档目录，但数据库无对应行。手动清理，或者对入库目录里的孤儿文件点「重新入库」让 scanner 再走一次入库流程。</p>
     </div>
     <h2 class="text-subheading font-medium text-snow tracking-body">脏数据条目</h2>
     <n-spin :show="store.loading">

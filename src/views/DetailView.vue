@@ -1,5 +1,5 @@
 <script setup lang="ts">
-/// DetailView：列表（Library）/回收站点进来的详情页。
+/// DetailView：列表（Library）/文件回收站点进来的详情页。
 ///
 /// 缩略图渲染管线见 `composables/useThumbnailPipeline.ts`：
 /// - IntersectionObserver 触发 `pipeline.request(index)`，仅调度可见 cell
@@ -220,7 +220,7 @@ async function moveToWillDelete() {
 function statusLabel(): string {
   if (!file.value) return ""
   switch (file.value.status) {
-    case "recycle": return "回收站"
+    case "recycle": return "文件回收站"
     case "archived": return "归档"
     case "deleted": return "已删除"
     default: return "已入库"

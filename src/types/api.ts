@@ -125,7 +125,7 @@ export interface Page<T> {
   total: number
 }
 
-/// 回收站首页专属 shape：present（硬盘还有）+ gone（已清走）。
+/// 文件回收站首页专属 shape：present（硬盘还有）+ gone（已清走）。
 /// 两段各自独立分页，各自的 total 独立计算。
 export interface RecyclePage {
   present: Page<FileSummary>
