@@ -296,7 +296,7 @@ function fmtMtime(iso: string): string {
             <ul v-if="store.data" class="path-list">
               <li v-for="row in [
                 { label: '资源根', value: store.data.resources_dir },
-                { label: '入库冲突处理', value: store.data.inbox_dir },
+                { label: '入库', value: store.data.inbox_dir },
                 { label: '已识别', value: store.data.identified_dir },
                 { label: '文件回收站', value: store.data.will_delete_dir },
                 { label: '封面缓存', value: store.data.covers_dir },
