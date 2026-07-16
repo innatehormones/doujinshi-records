@@ -495,17 +495,37 @@ pub async fn record_conflict(
     b_path: &Path,
     b_filename: &str,
 ) -> Result<()> {
+    let b_path_str = b_path.to_string_lossy().into_owned();
+    let now = chrono::Utc::now();
+
+    // Dedup on (a_file_id, b_file_path)：scanner 每重启一次，
+    // 只要 B 还坐在 inbox/，就会再调一次 record_conflict。
+    // 不去重的话每次启动都插一条新行——重新打开 resolved=false 并
+    // bump created_at 让它浮到 InboxView 顶部，不插新行。
+    if let Some(existing) = conflict::Entity::find()
+        .filter(conflict::Column::AFileId.eq(a_id))
+        .filter(conflict::Column::BFilePath.eq(&b_path_str))
+        .one(conn)
+        .await?
+    {
+        let mut am: conflict::ActiveModel = existing.into();
+        am.resolved = Set(false);
+        am.created_at = Set(now);
+        am.update(conn).await?;
+        return Ok(());
+    }
+
     let am = conflict::ActiveModel {
         a_file_id: Set(a_id),
-        b_file_path: Set(b_path.to_string_lossy().into_owned()),
+        b_file_path: Set(b_path_str),
         b_filename: Set(b_filename.to_string()),
         b_hash: Set(None),
         reason: Set("name_ext_collision".into()),
         resolved: Set(false),
-        created_at: Set(chrono::Utc::now()),
+        created_at: Set(now),
         ..Default::default()
     };
-    let _ = am.insert(conn).await;
+    am.insert(conn).await?;
     Ok(())
 }
 
