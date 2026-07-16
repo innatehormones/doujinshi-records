@@ -7,9 +7,9 @@
 
 use doujinshi_records::db;
 use doujinshi_records::services::backup::{
-    backup_filename, clear_restore_marker, hash_db_file, read_restore_marker, write_restore_marker,
-    BackupConfig, BackupService, BackupStorage, LocalFsStorage, RestorePending,
-    SettingsHandle,
+    apply_pending_restore, backup_filename, clear_restore_marker, hash_db_file, read_restore_marker,
+    validate_sqlite_file, write_restore_marker, BackupConfig, BackupService, BackupStorage,
+    LocalFsStorage, RestorePending, SettingsHandle,
 };
 use sea_orm::{ActiveModelTrait, EntityTrait, Set};
 use std::collections::HashMap;
@@ -393,8 +393,6 @@ async fn backup_now_retention_zero_keeps_all() {
     let (svc, conn) = make_svc_with_db(dir.path()).await;
     svc.set_config(Some(""), 0).await.unwrap();
     let backup_dir = dir.path().join("backups");
-    use doujinshi_records::db::entities::doujinshi_file;
-    use sea_orm::EntityTrait;
 
     for _ in 0..3 {
         insert_rows(&conn, 1).await;
@@ -422,4 +420,176 @@ async fn backup_now_serializes_concurrent_callers() {
     let errs = results.iter().filter(|r| r.is_err()).count();
     assert_eq!(oks, 1, "恰好一个应成功");
     assert_eq!(errs, 1, "另一个应失败");
+}
+
+// ─── Restore staging + apply ─────────────────────────────────────────────
+
+/// 建一个最小合法 SQLite（给 stage_restore / apply 测试用）。
+/// db::connect 走 rwc 模式创空文件；必须跑一次 schema 让 SQLite 写出 magic 头。
+async fn write_min_sqlite(path: &std::path::Path) {
+    let conn = db::connect(path).await.unwrap();
+    db::migrations::init_schema_versioned(&conn).await.unwrap();
+}
+
+#[tokio::test]
+async fn validate_sqlite_accepts_real_db() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("ok.db");
+    write_min_sqlite(&p).await;
+    assert!(validate_sqlite_file(&p).is_ok());
+}
+
+#[test]
+fn validate_sqlite_rejects_junk() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("junk.db");
+    std::fs::write(&p, b"not sqlite, just text").unwrap();
+    assert!(validate_sqlite_file(&p).is_err());
+}
+
+#[test]
+fn validate_sqlite_rejects_missing() {
+    let dir = tempfile::tempdir().unwrap();
+    let p = dir.path().join("nope.db");
+    assert!(validate_sqlite_file(&p).is_err());
+}
+
+#[tokio::test]
+async fn stage_restore_writes_marker_for_valid_src() {
+    let dir = tempfile::tempdir().unwrap();
+    let _db_path = dir.path().join("data.db");
+    let src = dir.path().join("snapshot.db");
+    write_min_sqlite(&src).await;
+
+    let (svc, _conn) = make_svc_with_db(dir.path()).await;
+    svc.stage_restore(&src).await.unwrap();
+
+    let marker = dir.path().join(".restore-pending.json");
+    let pending = read_restore_marker(&marker).unwrap().unwrap();
+    assert_eq!(pending.src, src.to_string_lossy());
+    assert!(!pending.requested_at.is_empty());
+}
+
+#[tokio::test]
+async fn stage_restore_rejects_non_sqlite_src() {
+    let dir = tempfile::tempdir().unwrap();
+    let junk = dir.path().join("junk.db");
+    std::fs::write(&junk, b"not sqlite").unwrap();
+
+    let (svc, _conn) = make_svc_with_db(dir.path()).await;
+    assert!(svc.stage_restore(&junk).await.is_err());
+
+    // marker 不该被写
+    let marker = dir.path().join(".restore-pending.json");
+    assert!(read_restore_marker(&marker).unwrap().is_none());
+}
+
+#[tokio::test]
+async fn apply_pending_restore_no_marker_returns_none() {
+    let dir = tempfile::tempdir().unwrap();
+    let db_path = dir.path().join("data.db");
+    let marker = dir.path().join(".restore-pending.json");
+    std::fs::write(&db_path, b"current").unwrap();
+
+    let result = apply_pending_restore(&db_path, &marker).await.unwrap();
+    assert!(result.is_none());
+    // db 未动
+    assert_eq!(std::fs::read(&db_path).unwrap(), b"current");
+}
+
+#[tokio::test]
+async fn apply_pending_restore_replaces_db_and_clears_marker() {
+    let dir = tempfile::tempdir().unwrap();
+    let src = dir.path().join("snapshot.db");
+    write_min_sqlite(&src).await;
+    let db_path = dir.path().join("data.db");
+    std::fs::write(&db_path, b"old content").unwrap();
+    let marker = dir.path().join(".restore-pending.json");
+    write_restore_marker(&marker, &RestorePending {
+        src: src.to_string_lossy().into(),
+        requested_at: "2026-07-15T00:00:00Z".into(),
+    })
+    .unwrap();
+
+    let result = apply_pending_restore(&db_path, &marker).await.unwrap();
+    assert_eq!(result, Some(src.to_string_lossy().into()));
+
+    // db 已被 src 覆盖
+    assert_eq!(std::fs::read(&db_path).unwrap(), std::fs::read(&src).unwrap());
+    // marker 已清
+    assert!(!marker.exists());
+}
+
+#[tokio::test]
+async fn apply_pending_restore_rejects_non_sqlite_src_leaves_db_intact() {
+    let dir = tempfile::tempdir().unwrap();
+    let junk = dir.path().join("junk.db");
+    std::fs::write(&junk, b"corrupted").unwrap();
+    let db_path = dir.path().join("data.db");
+    std::fs::write(&db_path, b"current good").unwrap();
+    let marker = dir.path().join(".restore-pending.json");
+    write_restore_marker(&marker, &RestorePending {
+        src: junk.to_string_lossy().into(),
+        requested_at: "2026-07-15T00:00:00Z".into(),
+    })
+    .unwrap();
+
+    let result = apply_pending_restore(&db_path, &marker).await;
+    assert!(result.is_err(), "坏 src 应抛 Err");
+
+    // db 未动，marker 保留供排查
+    assert_eq!(std::fs::read(&db_path).unwrap(), b"current good");
+    assert!(marker.exists());
+}
+
+// ─── Auto-backup threshold ───────────────────────────────────────────────
+
+use doujinshi_records::services::backup::{read_backup_state as _rbs, write_backup_state as _wbs, BackupState};
+
+async fn write_state_last_at(dir: &std::path::Path, last_at: chrono::DateTime<chrono::Utc>) {
+    std::fs::create_dir_all(dir).unwrap();
+    let mut state = BackupState::default();
+    state.last_at = last_at.to_rfc3339();
+    state.last_md5 = "fake".into();
+    _wbs(dir, &state).await.unwrap();
+}
+
+#[tokio::test]
+async fn should_auto_backup_true_when_no_history() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, _conn) = make_svc_with_db(dir.path()).await;
+    // sidecar 不存在 → 无历史 → 触发
+    assert!(svc.should_auto_backup(24).await.unwrap());
+}
+
+#[tokio::test]
+async fn should_auto_backup_false_when_recent() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, _conn) = make_svc_with_db(dir.path()).await;
+    let backup_dir = dir.path().join("backups");
+    write_state_last_at(&backup_dir, chrono::Utc::now() - chrono::Duration::hours(1)).await;
+    assert!(!svc.should_auto_backup(24).await.unwrap());
+}
+
+#[tokio::test]
+async fn should_auto_backup_true_when_old() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, _conn) = make_svc_with_db(dir.path()).await;
+    let backup_dir = dir.path().join("backups");
+    write_state_last_at(&backup_dir, chrono::Utc::now() - chrono::Duration::hours(25)).await;
+    assert!(svc.should_auto_backup(24).await.unwrap());
+}
+
+#[tokio::test]
+async fn should_auto_backup_treats_unparseable_last_at_as_old() {
+    let dir = tempfile::tempdir().unwrap();
+    let (svc, _conn) = make_svc_with_db(dir.path()).await;
+    let backup_dir = dir.path().join("backups");
+    std::fs::create_dir_all(&backup_dir).unwrap();
+    // 手动写个破 JSON 模拟文件腐败
+    std::fs::write(backup_dir.join("backup_state.json"), b"{\"last_at\":\"garbage\"}").unwrap();
+    assert!(svc.should_auto_backup(24).await.unwrap());
+    // 确认读出来确实是 last_at="garbage"
+    let s = _rbs(&backup_dir).await.unwrap();
+    assert_eq!(s.last_at, "garbage");
 }

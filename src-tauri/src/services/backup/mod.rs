@@ -70,6 +70,38 @@ pub fn clear_restore_marker(path: &Path) {
     let _ = std::fs::remove_file(path);
 }
 
+/// 校验路径是不是合法 SQLite（magic header = "SQLite format 3\0"）。
+/// 启动期 apply 与 stage_restore 都用它拦截非 SQLite 文件，避免把烂字节当 DB。
+pub fn validate_sqlite_file(path: &Path) -> anyhow::Result<()> {
+    use std::io::Read;
+    let mut f = std::fs::File::open(path)?;
+    let mut header = [0u8; 16];
+    f.read_exact(&mut header)?;
+    if &header == b"SQLite format 3\x00" {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!("not a valid SQLite file: {}", path.display()))
+    }
+}
+
+/// 启动期检查 + 应用待执行的还原。返回 `Ok(Some(src))` 表示已替换，
+/// `Ok(None)` 表示无 marker。`src` 校验失败抛 Err：marker 保留供排查，
+/// db 不动。
+pub async fn apply_pending_restore(
+    db_path: &Path,
+    marker_path: &Path,
+) -> anyhow::Result<Option<String>> {
+    let pending = match read_restore_marker(marker_path)? {
+        Some(p) => p,
+        None => return Ok(None),
+    };
+    let src = Path::new(&pending.src);
+    validate_sqlite_file(src)?;
+    std::fs::copy(src, db_path)?;
+    clear_restore_marker(marker_path);
+    Ok(Some(pending.src))
+}
+
 /// Backup bookkeeping（不能放 app_setting：写入会改 DB 文件，破坏 dedup 的 hash 比对）。
 /// 写在 `<backup_dir>/backup_state.json`，每次 backup_now 末更新。
 #[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq)]

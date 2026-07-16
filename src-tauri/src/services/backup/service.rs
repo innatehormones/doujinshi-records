@@ -18,7 +18,10 @@ use tokio::sync::Mutex;
 use uuid::Uuid;
 
 use super::storage::{BackupStorage, LocalFsStorage, SnapshotInfo};
-use super::{backup_filename, hash_db_file, read_backup_state, write_backup_state, BackupConfig};
+use super::{
+    backup_filename, hash_db_file, read_backup_state, validate_sqlite_file, write_backup_state,
+    write_restore_marker, BackupConfig, RestorePending,
+};
 
 /// `BackupResult` —— `backup_now` 返回。
 /// `skipped: Some(reason)` 表示本次因内容未变而跳过。
@@ -141,6 +144,42 @@ impl BackupService {
         let cfg = self.get_config().await?;
         let dir = self.resolve_backup_dir(&cfg);
         self.storage.list_snapshots(&dir)
+    }
+
+    /// 启动期自动备份判断：上次成功备份距今 ≥ `threshold_hours` 则建议跑一次。
+    /// 无历史 → true；state 文件 last_at 解析失败 → 也按"是"处理（保守）。
+    pub async fn should_auto_backup(&self, threshold_hours: u64) -> anyhow::Result<bool> {
+        let cfg = self.get_config().await?;
+        let dir = self.resolve_backup_dir(&cfg);
+        let state = read_backup_state(&dir).await?;
+        if state.last_at.is_empty() {
+            return Ok(true);
+        }
+        let last_at = match chrono::DateTime::parse_from_rfc3339(&state.last_at) {
+            Ok(t) => t.with_timezone(&chrono::Utc),
+            Err(_) => return Ok(true),
+        };
+        let diff = chrono::Utc::now().signed_duration_since(last_at);
+        Ok(diff.num_hours() >= threshold_hours as i64)
+    }
+
+    /// 标记一个还愿：写 `<resources>/.restore-pending.json`，下次启动期
+    /// `apply_pending_restore` 会把 src copy 覆盖 db_path。先校 magic
+    /// 提前挡掉非 SQLite 源文件，避免下次启动坏 DB。
+    pub async fn stage_restore(&self, src: &Path) -> anyhow::Result<()> {
+        validate_sqlite_file(src)?;
+        let marker = self.restore_marker_path();
+        let pending = RestorePending {
+            src: src.to_string_lossy().to_string(),
+            requested_at: chrono::Utc::now().to_rfc3339(),
+        };
+        write_restore_marker(&marker, &pending)?;
+        Ok(())
+    }
+
+    fn restore_marker_path(&self) -> PathBuf {
+        let parent = self.db_path.parent().unwrap_or_else(|| Path::new("."));
+        parent.join(".restore-pending.json")
     }
 
     /// 核心：建一份当前 DB 的快照。
