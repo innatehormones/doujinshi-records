@@ -254,13 +254,12 @@ async fn list_backups_returns_sorted_snapshots() {
 /// 返回 `BackupService` 和 `Arc<DatabaseConnection>`（helper 改成顶级 fn 后调用方
 /// 各自 manage 连接生命周期；这里采用 owned Arc 方式）。
 async fn make_svc_with_db(tmp: &std::path::Path) -> (BackupService, Arc<sea_orm::DatabaseConnection>) {
-    use std::path::PathBuf;
     let conn = db::connect(&tmp.join("data.db")).await.unwrap();
     db::migrations::init_schema_versioned(&conn).await.unwrap();
     let conn_arc = Arc::new(conn);
     let svc = BackupService::new_with_db(
-        PathBuf::from(tmp.join("data.db")),
-        PathBuf::from(tmp.join("backups")),
+        tmp.join("data.db"),
+        tmp.join("backups"),
         conn_arc.clone(),
     );
     (svc, conn_arc)
@@ -415,7 +414,7 @@ async fn backup_now_serializes_concurrent_callers() {
     let h2 = tokio::spawn(async move { s2.backup_now().await });
     let (r1, r2) = tokio::join!(h1, h2);
 
-    let results = vec![r1.unwrap(), r2.unwrap()];
+    let results = [r1.unwrap(), r2.unwrap()];
     let oks = results.iter().filter(|r| r.is_ok()).count();
     let errs = results.iter().filter(|r| r.is_err()).count();
     assert_eq!(oks, 1, "恰好一个应成功");
@@ -548,9 +547,10 @@ use doujinshi_records::services::backup::{read_backup_state as _rbs, write_backu
 
 async fn write_state_last_at(dir: &std::path::Path, last_at: chrono::DateTime<chrono::Utc>) {
     std::fs::create_dir_all(dir).unwrap();
-    let mut state = BackupState::default();
-    state.last_at = last_at.to_rfc3339();
-    state.last_md5 = "fake".into();
+    let state = BackupState {
+        last_at: last_at.to_rfc3339(),
+        last_md5: "fake".into(),
+    };
     _wbs(dir, &state).await.unwrap();
 }
 
