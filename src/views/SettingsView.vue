@@ -8,6 +8,7 @@ import { RefreshCw, ClipboardCopy, RotateCw, Play, Save, Trash2 } from "@lucide/
 import { useSettingsStore } from "@/stores"
 import { api } from "@/api/tauri"
 import type { BackupConfig, BackupSnapshot } from "@/types/api"
+import ApiTestDialog from "@/components/ApiTestDialog.vue"
 
 const store = useSettingsStore()
 const message = useMessage()
@@ -22,6 +23,16 @@ const backupDirInput = ref<string>("")
 const retentionInput = ref<number>(10)
 const snapshots = ref<BackupSnapshot[]>([])
 const backingUp = ref(false)
+
+/// HTTP API 测试弹窗（V4.8）。`activeRoute` 持有当前选中的路由，绑定到
+/// `<api-test-dialog>` 的 method / path prop；`showDialog` 复用 n-modal 的
+/// show prop。点关闭按钮时 `@update:show` 把 showDialog 写回 false。
+const activeRoute = ref<{ method: string; path: string } | null>(null)
+const showDialog = ref(false)
+function openTest(r: { method: string; path: string }) {
+  activeRoute.value = r
+  showDialog.value = true
+}
 
 onMounted(() => store.load())
 
@@ -419,6 +430,7 @@ function fmtMtime(iso: string): string {
                 <th class="col-method">METHOD</th>
                 <th class="col-path">PATH</th>
                 <th class="col-note">描述</th>
+                <th class="col-act">操作</th>
               </tr>
             </thead>
             <tbody>
@@ -426,12 +438,22 @@ function fmtMtime(iso: string): string {
                 <td class="col-method"><span class="method">{{ r.method }}</span></td>
                 <td class="col-path"><code class="api-path">{{ r.path }}</code></td>
                 <td class="col-note">{{ r.note }}</td>
+                <td class="col-act">
+                  <n-button size="tiny" @click="openTest(r)">测试</n-button>
+                </td>
               </tr>
             </tbody>
           </table>
         </div>
       </article>
     </section>
+
+    <api-test-dialog
+      :show="showDialog"
+      :method="activeRoute?.method ?? ''"
+      :path="activeRoute?.path ?? ''"
+      @update:show="showDialog = $event"
+    />
   </div>
 </template>
 
@@ -650,6 +672,7 @@ function fmtMtime(iso: string): string {
 .col-method { width: 80px; }
 .col-path   { width: 320px; }
 .col-note   { color: var(--color-silver-mist); }
+.col-act    { width: 88px; text-align: right; }
 
 .method {
   font-family: var(--font-mono);
