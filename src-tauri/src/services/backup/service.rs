@@ -12,7 +12,7 @@ use std::pin::Pin;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 
-use super::storage::{BackupStorage, LocalFsStorage};
+use super::storage::{BackupStorage, LocalFsStorage, SnapshotInfo};
 use super::BackupConfig;
 
 /// `SettingsHandle` 把「app_setting 读写」抽出来——service 层不依赖 SeaORM，
@@ -120,5 +120,11 @@ impl BackupService {
             .write("backup_retention_count", &retention.to_string())
             .await?;
         Ok(())
+    }
+
+    pub async fn list_backups(&self) -> anyhow::Result<Vec<SnapshotInfo>> {
+        let cfg = self.get_config().await?;
+        let dir = self.resolve_backup_dir(&cfg);
+        self.storage.list_snapshots(&dir)
     }
 }

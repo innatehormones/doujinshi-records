@@ -203,3 +203,34 @@ fn service_resolve_backup_dir_empty_falls_back_to_default() {
     let cfg2 = BackupConfig { dir: "D:/custom".into(), retention_count: 5 };
     assert_eq!(svc.resolve_backup_dir(&cfg2), PathBuf::from("D:/custom"));
 }
+
+#[tokio::test]
+async fn list_backups_returns_sorted_snapshots() {
+    let dir = tempfile::tempdir().unwrap();
+    let backup_dir = dir.path().join("backups");
+    std::fs::create_dir_all(&backup_dir).unwrap();
+    // 3 个备份 + 1 个无关文件；按写入顺序让 mtime 递增
+    let f1 = backup_dir.join("data-2026-07-13T10-00-00Z.db");
+    let f2 = backup_dir.join("data-2026-07-14T10-00-00Z.db");
+    let f3 = backup_dir.join("data-2026-07-15T10-00-00Z.db");
+    std::fs::write(&f1, b"old").unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    std::fs::write(&f2, b"mid").unwrap();
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    std::fs::write(&f3, b"new").unwrap();
+    std::fs::write(backup_dir.join("readme.txt"), b"x").unwrap();
+
+    let svc = BackupService::new(
+        dir.path().join("data.db"),
+        backup_dir.clone(),
+        Arc::new(LocalFsStorage),
+        Arc::new(FakeSettings::new()),
+    );
+    let list = svc.list_backups().await.unwrap();
+    assert_eq!(list.len(), 3);
+    assert_eq!(list[0].path, f3); // 最新
+    assert_eq!(list[2].path, f1); // 最旧
+    for s in &list {
+        assert!(s.size_bytes > 0);
+    }
+}
