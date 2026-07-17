@@ -1,10 +1,10 @@
-# Spec — HTTP API 测试弹窗（V4.8 增量）
+# Spec — HTTP API 测试弹窗
 
 > 日期：2026-07-16
 > 状态：implemented
 > 范围：**Settings 页 HTTP API 路由表加「测试」按钮**——点击打开弹窗，左侧 cURL 代码 + 参数输入、右侧响应结果
 > 触发：用户 2026-07-16 提出「设置页面的『HTTP API』是否可以增加接口测试」，明确要求「只在弹窗上实现，方便拆分/移除」
-> 前序：V4.7（设置页重设计，引入内联 HTTP API 路由表）+ 数据备份 spec（暴露 `auth_token` / `apiBase`）
+> 前序：设置页重设计 spec（2026-07-16，引入内联 HTTP API 路由表）+ 数据备份 spec（暴露 `auth_token` / `apiBase`）
 
 ## 背景
 

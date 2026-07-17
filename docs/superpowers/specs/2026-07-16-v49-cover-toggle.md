@@ -1,10 +1,10 @@
-# Spec — 列表封面显示开关（V4.9 增量）
+# Spec — 列表封面显示开关
 
 > 日期：2026-07-16
 > 状态：implemented
 > 范围：**InboxView「待处理冲突」+ RecycleBinView「待删除文件」列表加封面显示开关**——标题右侧 Image/Rows3 切换按钮，开启时每条卡片左侧渲染 64×80 缩略图
 > 触发：用户 2026-07-16 提出「在标题『待处理冲突』『待删除文件』的右侧增加一个封面显示的切换按钮」
-> 前序：V4（数据与文件解耦，FileSummary 带 cover_url）+ V4.6（RecycleBin 简化）
+> 前序：同人志数据与文件解耦 spec（2026-07-15，FileSummary 带 cover_url）+ 文件回收站简化 spec（2026-07-16，RecycleBin 简化）
 
 ## 背景
 

@@ -1,9 +1,9 @@
-# Spec — 文件回收站页面只保留「待删除文件」（V4.6 增量）
+# Spec — 文件回收站页面只保留「待删除文件」
 
 > 日期：2026-07-16
 > 状态：implemented
 > 范围：**文件回收站（RecycleBinView）移除「已从硬盘删除」段**——只展示 `status='recycle' + file_state='present'`；`status='recycle' + file_state ∈ {missing, absent_confirmed}` 的对应记录走 Library status filter 找到
-> 前序：V4（数据与文件解耦，引入 `file_state`） + 同一会话内的 sider 文案调整「回收站」→「文件回收站」
+> 前序：同人志数据与文件解耦 spec（2026-07-15，引入 `file_state`） + 同一会话内的 sider 文案调整「回收站」→「文件回收站」
 
 ## 背景
 

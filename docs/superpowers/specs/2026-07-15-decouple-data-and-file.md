@@ -1,9 +1,9 @@
-# Spec — 同人志数据与文件解耦（V4）
+# Spec — 同人志数据与文件解耦
 
 > 日期：2026-07-15
-> 状态：draft（待用户 review）
+> 状态：implemented
 > 范围：**同人志业务状态与文件状态解耦**——状态机由"强一致"改成"DB 优先 + 文件 best-effort"
-> 前序：V3（2026-07-11，加归档目录 + 脏数据 + webp 封面）+ v6（5 状态机折叠 physically_deleted）
+> 前序：5 状态机时代（2026-07-11，加归档目录 + 脏数据 + webp 封面；schema v6 折叠 permanently_deleted）
 
 ## 背景
 
