@@ -88,7 +88,6 @@ pub async fn permanent_delete_inner(
     let mut am: doujinshi_file::ActiveModel = row.into();
     am.status = Set("deleted".into());
     am.file_state = Set("absent_confirmed".into());
-    am.has_physical_file = Set(false);
     am.updated_at = Set(chrono::Utc::now());
     am.update(conn).await?;
     Ok(())

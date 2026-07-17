@@ -113,7 +113,6 @@ mod tests {
             last_seen_path: "p".into(),
             cover_path: Some("covers/h.pwb".into()),
             marked_for_delete: false,
-            has_physical_file: false,
             file_state: "absent_confirmed".into(),
             viewed: false,
             note: None,

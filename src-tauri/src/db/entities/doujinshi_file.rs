@@ -24,8 +24,6 @@ pub struct Model {
     pub viewed: bool,
     pub note: Option<String>,
     pub rating: Option<i32>,
-    /// 保留旧 has_physical_file 列作为冗余（迁移保险，后续版本可 drop）
-    pub has_physical_file: bool,
     pub created_at: chrono::DateTime<chrono::Utc>,
     pub updated_at: chrono::DateTime<chrono::Utc>,
 }

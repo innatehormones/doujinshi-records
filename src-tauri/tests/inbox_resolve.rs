@@ -230,7 +230,7 @@ async fn resolve_replace_b_promotes_b_to_library() {
         a.status, "deleted",
         "A should be in permanently_deleted state"
     );
-    assert!(!a.has_physical_file);
+    assert_eq!(a.file_state, "absent_confirmed");
     // B got a new doujinshi_file row
     let rows = doujinshi_file::Entity::find()
         .filter(doujinshi_file::Column::Filename.eq("replace_b.zip"))

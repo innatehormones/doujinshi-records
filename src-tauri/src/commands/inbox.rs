@@ -152,7 +152,6 @@ pub async fn resolve_conflict_inner(
                 let mut am: doujinshi_file::ActiveModel = a.into();
                 am.status = Set("deleted".into());
                 am.file_state = Set("absent_confirmed".into());
-                am.has_physical_file = Set(false);
                 am.updated_at = Set(chrono::Utc::now());
                 let _ = am.update(conn).await;
             }

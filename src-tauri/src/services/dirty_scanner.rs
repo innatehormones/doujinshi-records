@@ -104,7 +104,6 @@ async fn scan_dir(
         } else {
             let mut am: doujinshi_file::ActiveModel = matching_row.unwrap().into();
             am.file_state = Set("present".into());
-            am.has_physical_file = Set(true);
             am.update(conn).await?;
         }
     }
@@ -148,7 +147,6 @@ async fn scan_db_for_missing_files(
             let exists = p.exists();
             let mut am: doujinshi_file::ActiveModel = row.into();
             am.file_state = Set(if exists { "present".into() } else { "missing".into() });
-            am.has_physical_file = Set(exists);
             if !exists {
                 report.db_missing_files += 1;
                 let am_dirty = dirty_data::ActiveModel {
@@ -188,7 +186,6 @@ async fn scan_db_for_missing_files(
             let fixed = candidate.to_string_lossy().into_owned();
             am.last_seen_path = Set(fixed.clone());
             am.file_state = Set("present".into());
-            am.has_physical_file = Set(true);
             // 陈旧 last_seen_path 留作 dirty_data 一条
             let am_dirty = dirty_data::ActiveModel {
                 file_path: Set(last_seen_path_str.clone()),
@@ -202,7 +199,6 @@ async fn scan_db_for_missing_files(
             am.update(conn).await?;
         } else {
             am.file_state = Set("missing".into());
-            am.has_physical_file = Set(false);
             let am_dirty = dirty_data::ActiveModel {
                 file_path: Set(last_seen_path_str.clone()),
                 file_size: Set(0),

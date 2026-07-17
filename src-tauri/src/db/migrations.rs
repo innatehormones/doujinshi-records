@@ -111,7 +111,7 @@ pub async fn init_schema(conn: &DatabaseConnection) -> Result<()> {
 // never edit an existing one. Each entry must be idempotent because
 // `init_schema_versioned` may be replayed against an already-upgraded DB.
 
-pub const CURRENT_VERSION: i64 = 10;
+pub const CURRENT_VERSION: i64 = 12;
 
 /// (version, human-readable name, body of the migration SQL to apply when
 /// moving from `version - 1` to `version`). Each migration must guard itself
@@ -209,6 +209,26 @@ const MIGRATIONS: &[(i64, &str, &str)] = &[
         // 软删除（不 DELETE）是有意的——历史 dirty row 仍可在 SQL 查询里追溯。
         // apply_migration 的 ALTER TABLE ADD COLUMN 走 pragma_table_info 幂等检查。
         "ALTER TABLE dirty_data ADD COLUMN resolved_at TEXT",
+    ),
+    (
+        11,
+        "drop doujinshi_file.has_physical_file",
+        // V4 用 file_state 三态完整覆盖了「文件是否在盘上」的语义，
+        // has_physical_file 从 V4 起一直是冗余列（dirty_scanner / inbox /
+        // recycle 还在写，但没有任何读路径）。SQLite DROP COLUMN 要求该列
+        // 无索引引用——has_physical_file 从未有过索引，直接掉。
+        // apply_migration 对 ALTER TABLE DROP COLUMN 走 pragma_table_info
+        // 幂等检查，重复跑无事可做。
+        "ALTER TABLE doujinshi_file DROP COLUMN has_physical_file",
+    ),
+    (
+        12,
+        "drop filename_alias table",
+        // filename_alias 表从 V3 起记录「同 hash 别名」，但 V3.1 之后
+        // identifier.rs 改成"刷 filename + remove_file inbox 副本"，
+        // 没有读路径在用了。DROP TABLE 比每行 DELETE 干净；新库通过 v1
+        // bootstrap 创建后立刻被 v12 DROP 掉——v1 历史不动。
+        "DROP TABLE IF EXISTS filename_alias",
     ),
 ];
 

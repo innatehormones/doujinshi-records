@@ -38,7 +38,8 @@ async fn v2_upgrade_to_v3_preserves_existing_rows() {
     // 3) 启动：跑 init_schema_versioned，v1 已被 init_schema 应用，
     //    runner 接着应用 v2/v3 (no-op if already applied)、v4 (add
     //    has_physical_file)、v5 (create dirty_data)、v6 (fold
-    //    physically_deleted into current_location + drop column)。
+    //    physically_deleted into current_location + drop column)、
+    //    v8~v12（v7 是 cover 文件 rename 占位，无 covers_dir 时跳过盘上 IO）。
     migrations::init_schema_versioned(&conn).await.unwrap();
 
     // 4) 行还在
@@ -47,10 +48,6 @@ async fn v2_upgrade_to_v3_preserves_existing_rows() {
     let row = &rows[0];
     assert_eq!(row.title, "[V2] existing");
     assert_eq!(row.status, "in_library");
-    assert!(
-        row.has_physical_file,
-        "V2 upgrade should default has_physical_file to true"
-    );
 
     // 5) v6 之后 physically_deleted 列已砍
     let cols = conn
@@ -62,6 +59,17 @@ async fn v2_upgrade_to_v3_preserves_existing_rows() {
         .await
         .unwrap();
     assert_eq!(cols.len(), 0, "physically_deleted column should be dropped after v6");
+
+    // 5b) v11 把 has_physical_file 也砍了（V4 file_state 已覆盖其语义）
+    let cols = conn
+        .query_all(Statement::from_string(
+            backend.clone(),
+            "SELECT name FROM pragma_table_info('doujinshi_file') WHERE name='has_physical_file'"
+                .to_string(),
+        ))
+        .await
+        .unwrap();
+    assert_eq!(cols.len(), 0, "has_physical_file column should be dropped after v11");
 
     // 6) dirty_data 表就位
     let tbls = conn
@@ -85,9 +93,9 @@ async fn v3_physically_deleted_rows_migrate_to_permanently_deleted() {
 
     // 1) 模拟一个 v5 schema 的库：v1 落表（含 v5 之前的所有列，包括
     //    physically_deleted），然后 schema_version 标到 5，让后续 runner 只
-    //    跑 v6（v7 不需要 covers_dir）。直接 init_schema_versioned 会把 v6
-    //    + v7 也跑掉，physically_deleted 列就被砍了，下面 INSERT 没法
-    //    模拟 v5 库的场景。
+    //    跑 v6~v12。直接 init_schema_versioned 不会因 v11 DROP COLUMN
+    //    has_physical_file 失败——apply_migration 走 pragma_table_info 幂等
+    //    检查；如果 v11 时列还在就 drop（v5 库显然还在）。
     migrations::init_schema(&conn).await.unwrap();
     let backend = conn.get_database_backend();
     conn.execute(Statement::from_string(
@@ -133,10 +141,10 @@ async fn v3_physically_deleted_rows_migrate_to_permanently_deleted() {
     conn.execute(mkrow("alive", 0)).await.unwrap();
     conn.execute(mkrow("dead", 1)).await.unwrap();
 
-    // 3) 跑 v6（init_schema_versioned 在已升到 v5 的库里只跑 v6）
+    // 3) 跑 v6~v12
     migrations::init_schema_versioned(&conn).await.unwrap();
 
-    // 4) alive 仍 identified
+    // 4) alive 仍 in_library
     let alive = doujinshi_file::Entity::find()
         .filter(doujinshi_file::Column::Title.eq("alive"))
         .one(&conn)
@@ -145,7 +153,7 @@ async fn v3_physically_deleted_rows_migrate_to_permanently_deleted() {
         .unwrap();
     assert_eq!(alive.status, "in_library");
 
-    // 5) dead 已落 permanently_deleted
+    // 5) dead 已落 deleted（v6 把 permanently_deleted 重命名为 deleted，v8 完成）
     let dead = doujinshi_file::Entity::find()
         .filter(doujinshi_file::Column::Title.eq("dead"))
         .one(&conn)
@@ -153,7 +161,9 @@ async fn v3_physically_deleted_rows_migrate_to_permanently_deleted() {
         .unwrap()
         .unwrap();
     assert_eq!(dead.status, "deleted");
-    assert!(!dead.has_physical_file, "deleted 行应同步 has_physical_file=false");
+    // v6 把 has_physical_file=0，v8 把 has_physical_file=0 → file_state='missing'，
+    // v11 砍 has_physical_file 列——最终语义落在 file_state。
+    assert_eq!(dead.file_state, "missing");
 }
 
 #[tokio::test]

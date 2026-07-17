@@ -1,4 +1,4 @@
-use crate::db::entities::{conflict, doujinshi_file, filename_alias, scan_event};
+use crate::db::entities::{conflict, doujinshi_file, scan_event};
 use anyhow::{anyhow, Result};
 use sea_orm::{ActiveModelTrait, ColumnTrait, DatabaseConnection, EntityTrait, QueryFilter, Set};
 use std::path::{Path, PathBuf};
@@ -137,11 +137,10 @@ pub async fn identify_file(
         if existing.status == "in_library" {
             // 同 hash 已存在且在 in_library：inbox 副本是冗余的，不应该
             // 进入 identified 也不应该触发冲突（否则就退化成 step 4 的
-            // name+ext 检查）。直接把 inbox 的副本删掉，仅刷 alias +
+            // name+ext 检查）。直接把 inbox 的副本删掉，仅刷
             // filename + updated_at，last_seen_path 仍指原 identified
             // 副本——否则 dirty_scanner 会把原来的 identified/[...].zip
             // 误判为孤儿。
-            store_alias(conn, existing.id, &filename).await?;
             let _ = std::fs::remove_file(file_path);
             let mut am: doujinshi_file::ActiveModel = existing.clone().into();
             am.filename = Set(filename);
@@ -422,21 +421,9 @@ async fn finalize_identification(
     };
     let inserted = am.insert(conn).await?;
 
-    store_alias(conn, inserted.id, &move_filename).await?;
     record_event(conn, inserted.id, "new_file", None).await?;
 
     Ok(IdentifyOutcome::NewIdentified(inserted.id))
-}
-
-pub async fn store_alias(conn: &DatabaseConnection, file_id: i64, alias: &str) -> Result<()> {
-    let am = filename_alias::ActiveModel {
-        file_id: Set(file_id),
-        alias_filename: Set(alias.to_string()),
-        first_seen_at: Set(chrono::Utc::now()),
-        ..Default::default()
-    };
-    let _ = am.insert(conn).await; // ignore UniqueViolation
-    Ok(())
 }
 
 /// 把源文件从 inbox 移到 identified_dir/，并把行状态恢复到 identified。
@@ -471,13 +458,6 @@ pub async fn reactivate_row(
             return Err(e.into());
         }
     }
-
-    store_alias(
-        conn,
-        row_id,
-        &dest.file_name().unwrap().to_string_lossy(),
-    )
-    .await?;
 
     let mut am: doujinshi_file::ActiveModel = row.into();
     am.last_seen_path = Set(dest.to_string_lossy().into_owned());
