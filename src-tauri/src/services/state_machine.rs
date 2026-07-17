@@ -35,23 +35,6 @@ impl TransitionKind {
     }
 }
 
-pub async fn transition(
-    conn: &DatabaseConnection,
-    id: i64,
-    kind: TransitionKind,
-) -> Result<()> {
-    let cfg = crate::config::AppConfig::load()?;
-    transition_with_dirs(
-        conn,
-        id,
-        kind,
-        &cfg.identified_dir(),
-        &cfg.will_delete_dir(),
-        &cfg.archived_dir(),
-    )
-    .await
-}
-
 pub async fn transition_with_dirs(
     conn: &DatabaseConnection,
     id: i64,
@@ -125,31 +108,6 @@ pub async fn transition_with_dirs(
     am.updated_at = Set(chrono::Utc::now());
     am.update(conn).await?;
     Ok(())
-}
-
-/// V4 帮助函数：扫 4 个业务 status 中除 deleted 之外的 3 个（用于 dirty_scanner 等）
-pub fn non_deleted_statuses() -> [&'static str; 3] {
-    ["in_library", "archived", "recycle"]
-}
-
-/// 当前 status 是否是 deleted（用于 collision check 排除）
-pub fn is_deleted_status(s: &str) -> bool {
-    s == "deleted"
-}
-
-/// V4 帮助：dirty_scanner 在检查 expected_dir 时使用，避免重新字符串散落各处
-pub fn expected_dir_for_status<'a>(
-    status: &str,
-    identified_dir: &'a Path,
-    will_delete_dir: &'a Path,
-    archived_dir: &'a Path,
-) -> Option<&'a Path> {
-    match status {
-        "in_library" => Some(identified_dir),
-        "recycle" => Some(will_delete_dir),
-        "archived" => Some(archived_dir),
-        _ => None,
-    }
 }
 
 #[cfg(test)]
