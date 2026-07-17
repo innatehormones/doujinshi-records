@@ -16,7 +16,7 @@
 - V4 双字段模型：业务 `status ∈ {in_library, archived, recycle, deleted}`（任意可切）+ 文件 `file_state ∈ {present, missing, absent_confirmed}`（扫描 / 销毁维护）
 - 状态机「DB 优先 + 文件 best-effort」：源文件缺失不阻塞 status 更新；目标目录同名视为孤儿（`dirty_data(reason='overwritten_by_state_switch')`），自动覆盖
 - 销毁复合操作：`status=deleted` + `file_state=absent_confirmed` + best-effort 删文件 + LRU 缩略图失效
-- 启动时脏数据扫描：扫 4 个状态目录（不扫 deleted），按 file_state 三态更新
+- 启动时脏数据扫描：扫 3 个状态目录（不扫 deleted），按 file_state 三态更新
 - 脏数据页对 `orphan_file` 条目提供「重新入库」按钮：mover-only，`fs::rename` 到 inbox + 软删 dirty_data 行，剩下的入库由后台 scanner 接管（UI 立即返回，撞名 / rar 失败由 ConflictView / rar-error 兜底）
 - 文件名冲突检测：停在 Inbox，等用户决定跳过或比对；冲突 ReplaceB 把旧记录推到 `deleted + absent_confirmed`（不是终态，可恢复）
 - 文件回收站视图：V4.6 起只展示「待删除文件」（`status='recycle' + file_state='present'`），还原 / 永久删除；已被销毁的记录可在 Library 用 status filter（recycle / deleted）找到
@@ -44,7 +44,7 @@ doujinshi-records/
     doujinshi-identified/      # 识别后自动移到这里
     doujinshi-will-delete/     # 用户标记删除的文件
     doujinshi-archived/        # 归档文件
-    covers/                    # 抽取出的封面（约 100 KB / 张，webp）
+    covers/                    # 抽取出的封面（webp，文件名 `<hash>.pwb`，V8+ 改扩展名）
   src/                         # Vue 前端
   src-tauri/
     src/
@@ -145,13 +145,10 @@ V4 在 V7 schema 之上做 3 处增量改动（均为非破坏性升级）：
 - 监听器有 2 秒防抖窗口，新文件约 2–3 秒内出现在 Library。
 - 扫描器**只**处理 `resources/doujinshi/` 顶层的 `.zip` / `.rar`，子目录被忽略。
 - 数据库在 `<resources>/data.db`（首次运行时创建，schema 由 `init_schema_versioned` 自动迁移到 CURRENT_VERSION=8）。
-- 启动脏数据扫描只跑 4 个状态目录（`identified / will_delete / archived`，不扫 deleted）——`dirty_scanner` 在启动时同步触发一次。
+- 启动脏数据扫描只跑 3 个状态目录（`identified / will_delete / archived`，不扫 deleted）——`dirty_scanner` 在启动时同步触发一次。
 
 ## 设计文档
 
-- 设计 spec（V1 基础）：`docs/superpowers/specs/2026-07-09-doujinshi-records-design.md`
-- V3 spec（已被 V4 取代）：`docs/superpowers/specs/2026-07-11-v3-archive-and-dirty-data.md`
-- V3.1 spec（LRU preview cache）：`docs/superpowers/specs/2026-07-11-v31-lru-preview-cache.md`
 - **V4 spec（数据与文件解耦，当前权威）**：`docs/superpowers/specs/2026-07-15-decouple-data-and-file.md`
 - V4 实施 plan：`docs/superpowers/plans/2026-07-15-decouple-data-and-file.md`
 - **V4.5 增量 spec（脏数据页「重新入库」按钮）**：`docs/superpowers/specs/2026-07-16-dirty-reingest-button.md`
@@ -159,8 +156,4 @@ V4 在 V7 schema 之上做 3 处增量改动（均为非破坏性升级）：
 - **V4.7 增量 spec（设置页重设计 + 备份快照 mtime）**：`docs/superpowers/specs/2026-07-16-v47-settings-redesign.md`
 - **V4.8 增量 spec（HTTP API 测试弹窗）**：`docs/superpowers/specs/2026-07-16-v48-api-test-dialog.md`
 - **V4.9 增量 spec（Inbox / RecycleBin 列表封面显示开关）**：`docs/superpowers/specs/2026-07-16-v49-cover-toggle.md`
-- 实施 plan（V1）：`docs/superpowers/plans/2026-07-09-doujinshi-records-v1.md`
-- V3 plan（归档 + 脏数据 + webp）：`docs/superpowers/plans/2026-07-11-v3-archive-and-dirty-data.md`
-- V1.x 增量 plan：`docs/superpowers/plans/v1x/`
-- V2 增量 plan：`docs/superpowers/plans/v2/`
-- V4 设计由来（用户原始需求对话）：`docs/数据与文件状态机逻辑分析.md`
+- **V0.2.0 release plan**：`docs/superpowers/plans/2026-07-17-v020-release.md`
