@@ -17,7 +17,7 @@ const showRestore = ref(false)
 
 /// 「待删除文件」列表的封面显示开关。FileSummary 自带 cover_url，
 /// 开启时把缩略图渲染到每条左侧。默认关——避免一上来全表 IO。
-const showCover = ref(false)
+const showCover = ref(true)
 
 onMounted(() => store.load())
 
@@ -75,16 +75,13 @@ function fmtSize(bytes: number): string {
   <div class="page">
     <header class="flex items-baseline justify-between gap-4">
       <h1 class="text-heading-sm font-medium text-snow tracking-body">文件回收站</h1>
-      <span class="font-mono text-caption text-smoke tracking-[0.1em]">
-        共 {{ store.presentTotal }} 条
-      </span>
     </header>
     <div class="rounded-cards border border-border bg-card px-5 py-4">
       <p class="text-caption leading-[1.5] text-silver-mist">
         这里的文件已经移出已识别库，但仍占用硬盘空间。「永久删除」会把文件从硬盘移除；「还原」会让文件回到库内。两种操作都会保留数据记录。
       </p>
     </div>
-    <div class="flex items-center gap-3">
+    <div class="flex items-center justify-between gap-3">
       <h2 class="text-subheading font-medium text-snow tracking-body">
         待删除文件 ({{ store.presentTotal }})
       </h2>
@@ -105,7 +102,7 @@ function fmtSize(bytes: number): string {
     <n-spin :show="store.loading">
       <n-empty
         v-if="!store.loading && store.presentTotal === 0"
-        description="文件回收站为空。"
+        description="文件回收站为空"
       />
       <div v-else class="flex flex-col gap-2">
         <article
@@ -130,11 +127,8 @@ function fmtSize(bytes: number): string {
               </span>
               <span class="ml-auto font-mono text-caption text-smoke">{{ fmtSize(f.size_bytes) }}</span>
             </div>
-            <div class="text-caption text-silver-mist">
-              <span v-if="f.circle">{{ f.circle }} · </span>
-              <span class="font-mono">hash {{ f.hash.slice(0, 12) }}…</span>
-            </div>
-            <div class="break-all font-mono text-[13px] text-snow">{{ f.filename }}</div>
+            <div class="text-caption text-silver-mist">文件哈希：{{ f.hash }}</div>
+            <div class="text-caption break-all text-silver-mist">文件名称：{{ f.filename }}</div>
           </div>
           <div class="flex shrink-0 gap-2">
             <n-button size="small" @click="askRestore(f)">还原</n-button>
@@ -185,11 +179,6 @@ function fmtSize(bytes: number): string {
 .cover-toggle:hover {
   color: var(--color-snow);
   background: var(--color-ash);
-  border-color: var(--surface-border);
-}
-.cover-toggle.is-active {
-  color: var(--color-phosphor-green);
-  background: var(--color-forest-depth);
   border-color: var(--surface-border);
 }
 </style>

@@ -56,6 +56,12 @@ async function onReingest(id: number) {
     message.error(String(e))
   }
 }
+
+function toLocaleString(isoStr: string): string {
+  const date = new Date(isoStr)
+  if (isNaN(date.getTime())) return "--"
+  return date.toLocaleString()
+}
 </script>
 
 <template>
@@ -76,7 +82,7 @@ async function onReingest(id: number) {
               <n-tag size="small">{{ dirLabel(e.detected_dir) }}</n-tag>
               <n-tag size="small" :type="reasonTagType(e.reason)">{{ reasonLabel(e.reason) }}</n-tag>
               <span class="font-mono text-caption text-smoke">{{ formatSize(e.file_size) }}</span>
-              <span class="ml-auto font-mono text-[11px] text-smoke">{{ e.first_seen_at }}</span>
+              <span class="ml-auto font-mono text-[11px] text-smoke">{{ toLocaleString(e.first_seen_at) }}</span>
             </div>
             <div class="break-all font-mono text-[13px] text-snow">{{ e.file_path }}</div>
           </div>

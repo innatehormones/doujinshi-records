@@ -37,7 +37,7 @@ const STATUS_LABEL: Record<string, string> = {
 /// V4 file_state → 中文标签 / tag 颜色。仅当 file_state ≠ present 时显示。
 const FILE_STATE_LABEL: Record<string, string> = {
   missing: "文件丢失",
-  absent_confirmed: "已删",
+  absent_confirmed: "文件已删",
 }
 const FILE_STATE_TAG_TYPE: Record<string, TagType> = {
   missing: "error",

@@ -13,7 +13,7 @@ onMounted(() => store.load())
 
 /// 「待处理冲突」列表的封面显示开关。默认关——避免一上来 50 条全请求
 /// HTTP 拉图。B 端没封面，开了也只显示 A 端（B 还没入库）。
-const showCover = ref(false)
+const showCover = ref(true)
 
 const WINRAR_URL = "https://www.win-rar.com/"
 const SEVENZIP_URL = "https://www.7-zip.org/"
@@ -123,7 +123,7 @@ function rarErrorTitle(kind: RarError["kind"]): string {
       </n-alert>
     </div>
 
-    <div class="flex items-center gap-3">
+    <div class="flex items-center justify-between gap-3">
       <h2 class="text-subheading font-medium text-snow tracking-body">
         待处理冲突 ({{ store.total }})
       </h2>
@@ -145,7 +145,7 @@ function rarErrorTitle(kind: RarError["kind"]): string {
     <n-spin :show="store.loading">
       <n-empty
         v-if="!store.loading && store.conflicts.length === 0"
-        description="没有待处理冲突。"
+        description="没有待处理冲突"
       />
       <div class="flex flex-col gap-3">
         <article
@@ -173,8 +173,8 @@ function rarErrorTitle(kind: RarError["kind"]): string {
               已在库中：<strong class="text-snow">{{ c.a_title }}</strong>
               （id {{ c.a_file_id }}）
             </div>
-            <div class="break-all font-mono text-[11px] text-smoke">
-              {{ c.b_file_path }}
+            <div class="text-caption break-all text-silver-mist">
+              冲突文件：{{ c.b_file_path }}
             </div>
           </div>
           <div class="flex shrink-0 gap-2">
@@ -250,11 +250,6 @@ function rarErrorTitle(kind: RarError["kind"]): string {
 .cover-toggle:hover {
   color: var(--color-snow);
   background: var(--color-ash);
-  border-color: var(--surface-border);
-}
-.cover-toggle.is-active {
-  color: var(--color-phosphor-green);
-  background: var(--color-forest-depth);
   border-color: var(--surface-border);
 }
 </style>

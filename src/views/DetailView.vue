@@ -296,6 +296,7 @@ function fileStateTagType(s: string): "default" | "primary" | "info" | "success"
             description="zip 内无图片"
           />
           <div v-else class="album-grid">
+          <div class="grid-content">
             <div
               v-for="(img, idx) in images"
               :key="img.name"
@@ -316,6 +317,7 @@ function fileStateTagType(s: string): "default" | "primary" | "info" | "success"
               />
               <div class="px-badge">P{{ idx + 1 }}</div>
             </div>
+          </div>
           </div>
         </n-card>
 
@@ -363,20 +365,19 @@ function fileStateTagType(s: string): "default" | "primary" | "info" | "success"
               <div>作品入库序号：{{ file.id }}</div>
               <div>入库文件哈希：{{ file.hash.slice(0, 16) }}…</div>
               <div>入库文件名称：{{ file.filename }}</div>
-              <div>
+              <div class="mt-0.5">
+                  业务状态：
+                  <n-tag size="small" :type="statusTagType()">
+                    {{ statusLabel() }}
+                  </n-tag>
+              </div>
+              <div class="mt-0.5">
                 文件状态：
                 <n-tag size="small" :type="fileStateTagType(file.file_state)">
                   {{ fileStateTitle(file.file_state) }}
                 </n-tag>
               </div>
-            </div>
-            <div class="status-block">
-              <span class="status-label">状态</span>
-              <div class="status-row">
-                <n-tag :type="statusTagType()">
-                  {{ statusLabel() }}
-                </n-tag>
-              </div>
+
             </div>
             <div class="action-divider" />
             <n-space>
@@ -455,15 +456,18 @@ function fileStateTagType(s: string): "default" | "primary" | "info" | "success"
   }
 }
 .album-grid {
+  max-height: calc(100vh - 160px);
+  min-height: 0;
+  height: 100%;
+  overflow-y: auto;
+}
+.grid-content {
+  padding-right: 4px;
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
   gap: 8px;
   /* 详情页是单页内容，预览 grid 占满主区可视高度，溢出滚动而非占满屏。
      calc 100vh 减去 header+padding+card title 高度：避免在大窗口下被切到底。 */
-  max-height: calc(100vh - 102px);
-  min-height: 0;
-  overflow-y: auto;
-  padding: 4px;
 }
 /* 缩略图 cell：骨架永远占底，<img> 覆盖在骨架上解码期间 opacity:0，
    onLoad 切 .thumb-img-loaded 才淡入——避免"灰→黑→图"三段闪烁。 */
@@ -520,24 +524,11 @@ function fileStateTagType(s: string): "default" | "primary" | "info" | "success"
   0% { background-position: 200% 0; }
   100% { background-position: -200% 0; }
 }
-.status-block {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-.status-label {
-  font-size: 11px;
-  font-weight: 500;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--color-smoke);
-}
 .action-divider {
   height: 1px;
   background: var(--color-border);
   margin: 4px 0;
 }
-.status-row { display: flex; gap: 6px; flex-wrap: wrap; }
 .file-meta {
   font-size: 11px;
   color: var(--color-smoke);
