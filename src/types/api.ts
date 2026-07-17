@@ -114,11 +114,6 @@ export interface ReparseResult {
   translator: string | null
 }
 
-export interface SearchResult {
-  items: FileSummary[]
-  total: number
-}
-
 /// 通用分页响应：与 Rust `Page<T>` 一一对应。
 /// `limit` 是请求方持有的当前页大小，不必回传——前端 store 内部跟踪。
 export interface Page<T> {

@@ -549,8 +549,8 @@ pub async fn patch_metadata(
 }
 
 /// `GET /api/doujinshi/:id/reparse` — 重新跑 `filename_parser`，**不写
-/// DB**。返回解析结果让前端填表单，等用户点「保存」才落库。镜像
-/// `commands::library::reparse_metadata` Tauri command。
+/// DB**。返回解析结果让前端填表单，等用户点「保存」才落库。前端
+/// DetailView 的「重新解析元数据」按钮走这条 HTTP 路径。
 pub async fn reparse_metadata(
     State(s): State<ApiState>,
     Path(id): Path<i64>,

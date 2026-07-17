@@ -208,7 +208,6 @@ pub async fn run(cfg: config::AppConfig, conn: DatabaseConnection) {
             commands::library::mark_for_delete,
             commands::library::update_metadata,
             commands::library::get_by_id,
-            commands::library::reparse_metadata,
             commands::library::force_extract,
             commands::library::archive,
             commands::library::restore,

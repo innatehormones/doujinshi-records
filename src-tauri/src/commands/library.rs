@@ -181,32 +181,6 @@ pub struct ReparseResult {
     pub translator: Option<String>,
 }
 
-/// 重新跑 `filename_parser` 解析已入库文件的 filename，**不写库**。
-///
-/// 用途：V4 之前入库时若解析器逻辑有 bug（比如 translator 那条规则用了
-/// Latin1 字节版「翻訳」），DB 里的 circle/series/translator 可能不
-/// 准确；现在让用户在 DetailView 手动触发一次重新解析，看一眼结果，
-/// 觉得没问题再点「保存」覆盖。
-#[tauri::command]
-pub async fn reparse_metadata(
-    state: State<'_, AppState>,
-    id: i64,
-) -> AppResult<ReparseResult> {
-    use sea_orm::EntityTrait;
-    let row = doujinshi_file::Entity::find_by_id(id)
-        .one(&state.conn)
-        .await?
-        .ok_or_else(|| AppError::Other(format!("file {} not found", id)))?;
-    let p = crate::services::filename_parser::parse(&row.filename);
-    Ok(ReparseResult {
-        filename: row.filename,
-        title: p.title,
-        circle: p.circle,
-        series: p.series,
-        translator: p.translator,
-    })
-}
-
 /// Apply a partial metadata patch to a single doujinshi row. Called
 /// both by the `update_metadata` Tauri command and by the HTTP
 /// `PATCH /api/doujinshi/:id` handler.
