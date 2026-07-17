@@ -18,13 +18,30 @@ fn pick_series(series_caps: Vec<String>) -> Option<String> {
         .find(|s| !c_event_re.is_match(s.trim()))
 }
 
+/// 匹配中文翻译标记：bracket 内含 `中国` / `中國` / `汉化` / `漢化` /
+/// `Chinese` 任意一种 → 归一化为 `"Chinese"`。存原文（如 `中国翻訳`）
+/// 会让前端过滤 `translator = Chinese` 落空，所以必须归一。
+fn is_chinese_translation_marker(s: &str) -> bool {
+    s.contains("中国")
+        || s.contains("中國")
+        || s.contains("汉化")
+        || s.contains("漢化")
+        || s.contains("Chinese")
+}
+
 /// Fallback when no bracket tag claimed translator. Cheap heuristics:
 /// 1. 中国 / 中國 / 汉化 → Chinese
 /// 2. hiragana / katakana present → Japanese
-/// 3. pure ASCII with letters → English
-/// 4. else None (CJK-only kanji could be either — don't guess)
+/// 3. 任何含 ASCII 字母的 title → English（含 emoji / 重音字符不算阻挡——
+///    `✅️ Porn comic ...` / `en Español` 之类是合法英语语境，原先要求纯
+///    ASCII 太严，几乎都走 None）
+/// 4. else None（纯 CJK 汉字中日都有可能，不猜）
 fn detect_translator_from_title(title: &str) -> Option<String> {
-    if title.contains("中国") || title.contains("中國") || title.contains("汉化") {
+    if title.contains("中国")
+        || title.contains("中國")
+        || title.contains("汉化")
+        || title.contains("漢化")
+    {
         return Some("Chinese".into());
     }
     let has_jp = title.chars().any(|c| {
@@ -36,8 +53,8 @@ fn detect_translator_from_title(title: &str) -> Option<String> {
     if has_jp {
         return Some("Japanese".into());
     }
-    let has_letter = title.chars().any(|c| c.is_ascii_alphabetic());
-    if has_letter && title.chars().all(|c| c.is_ascii() || c.is_whitespace()) {
+    let has_ascii_letter = title.chars().any(|c| c.is_ascii_alphabetic());
+    if has_ascii_letter {
         return Some("English".into());
     }
     None
@@ -55,7 +72,7 @@ pub fn parse(filename: &str) -> ParsedFilename {
     let bracket_re = regex::Regex::new(r"\[([^\[\]]+)\]").unwrap();
     let paren_re = regex::Regex::new(r"\(([^()]+)\)").unwrap();
 
-    let mut bracket_matches: Vec<String> = bracket_re
+    let bracket_matches: Vec<String> = bracket_re
         .captures_iter(&working)
         .map(|c| c[1].to_string())
         .collect();
@@ -82,15 +99,23 @@ pub fn parse(filename: &str) -> ParsedFilename {
     out.title = if title.is_empty() { stem.to_string() } else { title };
 
     if !bracket_matches.is_empty() {
-        out.circle = Some(bracket_matches.remove(0));
-    }
-    for chunk in bracket_matches {
-        if chunk.contains("翻訳") || chunk.contains("Chinese") {
-            if out.translator.is_none() {
-                out.translator = Some(chunk);
+        // 阶段 1：扫一遍 bracket，找中文翻译标记就归一化为 "Chinese"。
+        // 必须先扫、再定 circle——否则 `[中国翻訳] Title` 会被错认为
+        // circle = "中国翻訳"（原行为），而不是 translator = Chinese。
+        let mut remaining: Vec<String> = Vec::with_capacity(bracket_matches.len());
+        for chunk in bracket_matches {
+            if out.translator.is_none() && is_chinese_translation_marker(&chunk) {
+                out.translator = Some("Chinese".into());
+            } else {
+                remaining.push(chunk);
             }
-        } else if out.circle.is_none() {
-            out.circle = Some(chunk);
+        }
+        // 阶段 2：剩下的 bracket 里第 1 个当 circle；同文件多个 circle tag
+        // 不在业务范围内，靠用户手动修正。
+        if out.circle.is_none() {
+            if let Some(c) = remaining.into_iter().next() {
+                out.circle = Some(c);
+            }
         }
     }
 
@@ -166,8 +191,50 @@ mod tests {
     #[test]
     fn chinese_translator_via_jp_keyword() {
         // [中国翻訳] 真实 UTF-8 写法（之前的 Latin1 byte 版本是 bug）。
+        // 命中中文翻译标记 → 归一化为 "Chinese"，不再存原文让前端过滤落空。
         let p = parse("[SomeCircle] title [中国翻訳]");
-        assert_eq!(p.translator.as_deref(), Some("中国翻訳"));
+        assert_eq!(p.translator.as_deref(), Some("Chinese"));
+    }
+
+    #[test]
+    fn chinese_translator_via_solo_chinese_bracket() {
+        // bracket 第 1 个就是中文翻译标记：必须走 translator 分支，不是 circle。
+        // 原行为会把 `[中国翻訳]` 错认为 circle = "中国翻訳"。
+        let p = parse("[中国翻訳] Title");
+        assert_eq!(p.translator.as_deref(), Some("Chinese"));
+        assert_eq!(p.circle, None);
+        assert_eq!(p.title, "Title");
+    }
+
+    #[test]
+    fn chinese_translator_via_hanzi_kanji_huaban() {
+        // [漢化] 也是中文翻译标记（同义异写）。
+        let p = parse("[Circle] Title [漢化]");
+        assert_eq!(p.translator.as_deref(), Some("Chinese"));
+        assert_eq!(p.circle.as_deref(), Some("Circle"));
+    }
+
+    #[test]
+    fn chinese_translator_via_simplified_huaban() {
+        // [汉化] 简体汉字写法同样归一化。
+        let p = parse("[汉化] Title");
+        assert_eq!(p.translator.as_deref(), Some("Chinese"));
+        assert_eq!(p.circle, None);
+    }
+
+    #[test]
+    fn english_fallback_with_emoji_in_title() {
+        // 原 `纯 ASCII` 判定会被 ✅️ 阻挡 → None。现在放宽：含 ASCII 字母
+        // 即 English，emoji / 重音字符不参与判定。
+        let p = parse("[Circle] ✅️ Porn comic Affair Hidden In The Leaves");
+        assert_eq!(p.translator.as_deref(), Some("English"));
+    }
+
+    #[test]
+    fn english_fallback_with_accented_letters() {
+        // `Español` 的 ñ 不是 ASCII，原逻辑 → None。放宽后命中 English。
+        let p = parse("[Circle] Comics Porno en Español");
+        assert_eq!(p.translator.as_deref(), Some("English"));
     }
 
     #[test]
