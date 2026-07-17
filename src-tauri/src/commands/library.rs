@@ -193,7 +193,7 @@ pub async fn apply_metadata_patch(
     let row = doujinshi_file::Entity::find_by_id(id)
         .one(conn)
         .await?
-        .ok_or_else(|| AppError::Other(format!("file {} not found", id)))?;
+        .ok_or_else(|| AppError::NotFound)?;
     let mut am: doujinshi_file::ActiveModel = row.into();
     if let Some(v) = patch.title       { am.title       = Set(v); }
     if let Some(v) = patch.circle      { am.circle      = Set(Some(v)); }
@@ -224,7 +224,7 @@ pub async fn get_by_id(
     let row = doujinshi_file::Entity::find_by_id(id)
         .one(&state.conn)
         .await?
-        .ok_or_else(|| AppError::Other(format!("file {} not found", id)))?;
+        .ok_or_else(|| AppError::NotFound)?;
     Ok(file_summary::from_model(&state.conn, &row).await)
 }
 
@@ -241,7 +241,7 @@ pub async fn force_extract(
 ) -> AppResult<()> {
     let p = std::path::PathBuf::from(&path);
     if !p.exists() {
-        return Err(AppError::Other(format!("file not found: {}", path)));
+        return Err(AppError::NotFound);
     }
     let outcome = crate::services::identifier::identify_file(
         &state.conn,

@@ -123,7 +123,7 @@ pub async fn resolve_conflict_inner(
     let row = conflict::Entity::find_by_id(id)
         .one(conn)
         .await?
-        .ok_or_else(|| crate::error::AppError::Other("conflict not found".into()))?;
+        .ok_or_else(|| crate::error::AppError::NotFound)?;
 
     match action {
         ConflictAction::Skip => {

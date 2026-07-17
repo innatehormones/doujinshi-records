@@ -50,7 +50,7 @@ pub async fn reingest_dirty_entry_inner(
     let row = dirty_data::Entity::find_by_id(id)
         .one(conn)
         .await?
-        .ok_or_else(|| AppError::Other(format!("dirty_data id={id} not found")))?;
+        .ok_or_else(|| AppError::NotFound)?;
 
     if row.reason != "orphan_file" {
         return Err(AppError::Other(format!(

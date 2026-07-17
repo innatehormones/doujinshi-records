@@ -79,7 +79,7 @@ pub async fn permanent_delete_inner(
     let row = doujinshi_file::Entity::find_by_id(id)
         .one(conn)
         .await?
-        .ok_or_else(|| AppError::Other(format!("file {} not found", id)))?;
+        .ok_or_else(|| AppError::NotFound)?;
     let p = std::path::Path::new(&row.last_seen_path);
     if p.exists() {
         // 失败也不阻塞主流程（用户可能已手动删了等）

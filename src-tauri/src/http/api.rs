@@ -541,9 +541,7 @@ pub async fn patch_metadata(
 ) -> impl IntoResponse {
     match crate::commands::library::apply_metadata_patch(&s.conn, id, patch).await {
         Ok(()) => StatusCode::NO_CONTENT.into_response(),
-        Err(crate::error::AppError::Other(msg)) if msg.contains("not found") => {
-            StatusCode::NOT_FOUND.into_response()
-        }
+        Err(crate::error::AppError::NotFound) => StatusCode::NOT_FOUND.into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()).into_response(),
     }
 }
