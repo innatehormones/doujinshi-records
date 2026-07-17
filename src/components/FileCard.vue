@@ -2,6 +2,8 @@
 import { NPopconfirm, NTag } from "naive-ui"
 import { Archive, Trash2, RotateCcw, X, AlertCircle } from "@lucide/vue"
 import type { FileSummary } from '@/types/api'
+import { formatBytes } from "@/lib/format"
+import { statusTagType, fileStateTagType } from "@/lib/file-state"
 
 const props = defineProps<{
   file: FileSummary
@@ -21,46 +23,23 @@ function coverSrc(): string {
   return props.apiBase + props.file.cover_url
 }
 
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return bytes + " B"
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB"
-  return (bytes / 1024 / 1024).toFixed(1) + " MB"
-}
-
-/// V4 业务 status → 中文标签 / Naive UI tag 颜色。
+/// V4 业务 status → 紧凑中文标签（tag 颜色见 @/lib/file-state）。
 const STATUS_LABEL: Record<string, string> = {
   in_library: "入库",
   archived: "归档",
   recycle: "回收",
   deleted: "已删",
 }
-/// V4 file_state → 中文标签 / tag 颜色。仅当 file_state ≠ present 时显示。
+/// V4 file_state → 紧凑中文标签。仅当 file_state ≠ present 时显示。
 const FILE_STATE_LABEL: Record<string, string> = {
   missing: "文件丢失",
   absent_confirmed: "文件已删",
 }
-const FILE_STATE_TAG_TYPE: Record<string, TagType> = {
-  missing: "error",
-  absent_confirmed: "error",
-}
-type TagType = "default" | "primary" | "info" | "success" | "warning" | "error"
-const STATUS_TAG_TYPE: Record<string, TagType> = {
-  in_library: "success",
-  archived: "info",
-  recycle: "warning",
-  deleted: "error",
-}
 function statusLabel(s: string): string {
   return STATUS_LABEL[s] ?? s
 }
-function statusTagType(s: string): TagType {
-  return STATUS_TAG_TYPE[s] ?? "default"
-}
 function fileStateLabel(s: string): string {
   return FILE_STATE_LABEL[s] ?? s
-}
-function fileStateTagType(s: string): TagType {
-  return FILE_STATE_TAG_TYPE[s] ?? "default"
 }
 
 </script>
@@ -127,7 +106,7 @@ function fileStateTagType(s: string): TagType {
       </div>
       <div class="flex min-h-4 items-center justify-between text-caption text-smoke">
         <span v-if="file.circle" class="max-w-[60%] truncate">{{ file.circle }}</span>
-        <span class="font-mono text-graphite tracking-[0.05em]">{{ formatSize(file.size_bytes) }}</span>
+        <span class="font-mono text-graphite tracking-[0.05em]">{{ formatBytes(file.size_bytes) }}</span>
       </div>
       <div class="mt-2 flex flex-nowrap gap-1.5" @click.stop>
         <!-- in_library: 归档 + 回收 -->

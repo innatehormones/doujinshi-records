@@ -6,6 +6,7 @@ import { useRecycleStore, useSettingsStore } from "@/stores"
 import PermanentDeleteDialog from "@/components/PermanentDeleteDialog.vue"
 import RestoreDialog from "@/components/RestoreDialog.vue"
 import type { FileSummary } from "@/types/api"
+import { formatBytes } from "@/lib/format"
 
 const store = useRecycleStore()
 const settings = useSettingsStore()
@@ -63,12 +64,6 @@ async function confirmRestore() {
     message.error(String(e))
   }
 }
-
-function fmtSize(bytes: number): string {
-  if (bytes < 1024) return bytes + " B"
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB"
-  return (bytes / 1024 / 1024).toFixed(1) + " MB"
-}
 </script>
 
 <template>
@@ -125,7 +120,7 @@ function fmtSize(bytes: number): string {
               <span class="truncate text-body-sm font-medium text-snow">
                 {{ f.title }}
               </span>
-              <span class="ml-auto font-mono text-caption text-smoke">{{ fmtSize(f.size_bytes) }}</span>
+              <span class="ml-auto font-mono text-caption text-smoke">{{ formatBytes(f.size_bytes) }}</span>
             </div>
             <div class="text-caption text-silver-mist">文件哈希：{{ f.hash }}</div>
             <div class="text-caption break-all text-silver-mist">文件名称：{{ f.filename }}</div>

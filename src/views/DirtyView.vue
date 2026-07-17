@@ -2,16 +2,11 @@
 import { onMounted } from "vue"
 import { NEmpty, NSpin, NTag, NPagination, NButton, NPopconfirm, useMessage } from "naive-ui"
 import { useDirtyStore } from "@/stores"
+import { formatBytes } from "@/lib/format"
 
 const store = useDirtyStore()
 const message = useMessage()
 onMounted(() => store.load())
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return bytes + " B"
-  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + " KB"
-  return (bytes / 1024 / 1024).toFixed(1) + " MB"
-}
 
 function dirLabel(dir: string): string {
   switch (dir) {
@@ -81,7 +76,7 @@ function toLocaleString(isoStr: string): string {
             <div class="flex items-center gap-2">
               <n-tag size="small">{{ dirLabel(e.detected_dir) }}</n-tag>
               <n-tag size="small" :type="reasonTagType(e.reason)">{{ reasonLabel(e.reason) }}</n-tag>
-              <span class="font-mono text-caption text-smoke">{{ formatSize(e.file_size) }}</span>
+              <span class="font-mono text-caption text-smoke">{{ formatBytes(e.file_size) }}</span>
               <span class="ml-auto font-mono text-[11px] text-smoke">{{ toLocaleString(e.first_seen_at) }}</span>
             </div>
             <div class="break-all font-mono text-[13px] text-snow">{{ e.file_path }}</div>

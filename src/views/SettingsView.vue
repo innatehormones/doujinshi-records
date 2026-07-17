@@ -9,6 +9,7 @@ import { useSettingsStore } from "@/stores"
 import { api } from "@/api/tauri"
 import type { BackupConfig, BackupSnapshot } from "@/types/api"
 import ApiTestDialog from "@/components/ApiTestDialog.vue"
+import { formatBytes } from "@/lib/format"
 
 const store = useSettingsStore()
 const message = useMessage()
@@ -161,12 +162,6 @@ const apiRoutes = computed(() => [
   { method: "GET", path: "/api/covers/by-hash/<hash>",         note: "按哈希取封面（需 Token）" },
   { method: "GET", path: "/api/covers/<file_id>",              note: "按 ID 取封面（需 Token）" },
 ])
-
-function fmtSize(bytes: number): string {
-  if (bytes >= 1024 * 1024) return (bytes / 1024 / 1024).toFixed(1) + " MB"
-  if (bytes >= 1024) return Math.round(bytes / 1024) + " KB"
-  return bytes + " B"
-}
 
 /// RFC3339 (UTC) → 本地时区 YYYY-MM-DD HH:MM。后端 chrono::Utc 写入，
 /// 文件名也用 UTC 时刻；前端展示成本地时间让用户判断「是不是我想要的那份」。
@@ -399,7 +394,7 @@ function fmtMtime(iso: string): string {
                   {{ s.path }}
                 </n-tooltip>
                 <span class="col-time font-mono text-caption text-smoke">{{ fmtMtime(s.mtime) }}</span>
-                <span class="col-size font-mono text-caption text-smoke">{{ fmtSize(s.size_bytes) }}</span>
+                <span class="col-size font-mono text-caption text-smoke">{{ formatBytes(s.size_bytes) }}</span>
                 <span class="col-act">
                   <n-button size="tiny" @click="stageRestore(s)">恢复</n-button>
                   <n-popconfirm @positive-click="deleteSnap(s)">

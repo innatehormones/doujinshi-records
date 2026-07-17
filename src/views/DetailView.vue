@@ -22,6 +22,7 @@ import type { FileSummary, MetadataPatch, DetailImage, ReparseResult } from "@/t
 import FullscreenPreview from "@/components/FullscreenPreview.vue"
 import { useThumbnailPipeline } from "@/composables/useThumbnailPipeline"
 import { usePreviewState } from "@/composables/usePreviewState"
+import { statusTagType, fileStateTagType } from "@/lib/file-state"
 
 /// IntersectionObserver 预读上下各 ~2 行（grid item 高度 200px + gap 8px）。
 const IO_ROOT_MARGIN = "420px 0px"
@@ -227,31 +228,12 @@ function statusLabel(): string {
   }
 }
 
-function statusTagType(): "default" | "primary" | "info" | "success" | "warning" | "error" {
-  if (!file.value) return "default"
-  switch (file.value.status) {
-    case "in_library": return "success"
-    case "archived": return "info"
-    case "recycle": return "warning"
-    case "deleted": return "error"
-  }
-}
-
 function fileStateTitle(s: string): string {
   switch (s) {
     case "present": return "文件存在"
     case "missing": return "文件已丢失"
     case "absent_confirmed": return "文件已销毁"
     default: return ""
-  }
-}
-
-function fileStateTagType(s: string): "default" | "primary" | "info" | "success" | "warning" | "error" {
-  switch (s) {
-    case "present": return "success"
-    case "missing": return "error"
-    case "absent_confirmed": return "error"
-    default: return "default"
   }
 }
 </script>
@@ -367,7 +349,7 @@ function fileStateTagType(s: string): "default" | "primary" | "info" | "success"
               <div>入库文件名称：{{ file.filename }}</div>
               <div class="mt-0.5">
                   业务状态：
-                  <n-tag size="small" :type="statusTagType()">
+                  <n-tag size="small" :type="statusTagType(file.status)">
                     {{ statusLabel() }}
                   </n-tag>
               </div>
