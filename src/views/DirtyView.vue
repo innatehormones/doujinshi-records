@@ -22,6 +22,32 @@ function dirLabel(dir: string): string {
   }
 }
 
+/// dirty_data.reason 的中文标签。后端存的是稳定英文标识符，这里是
+/// 前端唯一权威翻译——用户理解"这条记录为什么算脏"的入口。
+function reasonLabel(reason: string): string {
+  switch (reason) {
+    case "orphan_file":                    return "孤儿文件"
+    case "db_row_file_missing":            return "文件已丢失"
+    case "location_path_mismatch":         return "路径漂走"
+    case "location_path_mismatch_resolved":return "路径已自愈"
+    case "overwritten_by_state_switch":    return "转移时覆盖旧文件"
+    default: return reason
+  }
+}
+
+/// warning = 用户需介入（孤儿 / 文件丢失 / 路径漂走）；
+/// default = 系统已自愈或仅作审计。
+function reasonTagType(reason: string): "default" | "warning" {
+  switch (reason) {
+    case "orphan_file":
+    case "db_row_file_missing":
+    case "location_path_mismatch":
+      return "warning"
+    default:
+      return "default"
+  }
+}
+
 async function onReingest(id: number) {
   try {
     await store.reingest(id)
@@ -36,25 +62,23 @@ async function onReingest(id: number) {
   <div class="page">
     <header class="flex items-baseline justify-between gap-4">
       <h1 class="text-heading-sm font-medium text-snow tracking-body">脏数据</h1>
-      <span class="font-mono text-caption text-smoke tracking-[0.1em]">共 {{ store.total }} 条</span>
     </header>
     <div class="rounded-cards border border-border bg-card px-5 py-4">
       <p class="text-caption leading-[1.5] text-silver-mist">启动扫描发现：这些文件位于入库目录 / 文件回收站 / 归档目录，但数据库无对应行。手动清理，或者对入库目录里的孤儿文件点「重新入库」让 scanner 再走一次入库流程。</p>
     </div>
-    <h2 class="text-subheading font-medium text-snow tracking-body">脏数据条目</h2>
+    <h2 class="text-subheading font-medium text-snow tracking-body">脏数据条目 ({{ store.total }})</h2>
     <n-spin :show="store.loading">
-      <n-empty v-if="!store.loading && store.entries.length === 0" description="无脏数据。" />
+      <n-empty v-if="!store.loading && store.entries.length === 0" description="无脏数据" />
       <div v-else class="flex flex-col gap-2">
         <article v-for="e in store.entries" :key="e.id" v-memo="[e.id]" class="flex items-start gap-4 rounded-cards border border-border bg-card p-4">
           <div class="flex min-w-0 flex-1 flex-col gap-1.5">
             <div class="flex items-center gap-2">
               <n-tag size="small">{{ dirLabel(e.detected_dir) }}</n-tag>
-              <n-tag v-if="e.reason === 'orphan_file'" size="small" type="warning">孤儿</n-tag>
+              <n-tag size="small" :type="reasonTagType(e.reason)">{{ reasonLabel(e.reason) }}</n-tag>
               <span class="font-mono text-caption text-smoke">{{ formatSize(e.file_size) }}</span>
               <span class="ml-auto font-mono text-[11px] text-smoke">{{ e.first_seen_at }}</span>
             </div>
             <div class="break-all font-mono text-[13px] text-snow">{{ e.file_path }}</div>
-            <div class="text-[11px] text-graphite">reason: {{ e.reason }}</div>
           </div>
           <n-popconfirm
             v-if="e.reason === 'orphan_file'"
