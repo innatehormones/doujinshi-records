@@ -13,14 +13,14 @@
 - 监听 `resources/doujinshi/` 的新 ZIP / RAR 压缩包
 - BLAKE3 哈希去重 + 文件名解析（标题 / 社团 / 系列 / 译者 / 版本）
 - 自动抽取封面（压缩到约 100 KB WebP 格式）本地保存
-- V4 双字段模型：业务 `status ∈ {in_library, archived, recycle, deleted}`（任意可切）+ 文件 `file_state ∈ {present, missing, absent_confirmed}`（扫描 / 销毁维护）
+- 双字段数据模型：业务 `status ∈ {in_library, archived, recycle, deleted}`（任意可切）+ 文件 `file_state ∈ {present, missing, absent_confirmed}`（扫描 / 销毁维护）
 - 状态机「DB 优先 + 文件 best-effort」：源文件缺失不阻塞 status 更新；目标目录同名视为孤儿（`dirty_data(reason='overwritten_by_state_switch')`），自动覆盖
 - 销毁复合操作：`status=deleted` + `file_state=absent_confirmed` + best-effort 删文件 + LRU 缩略图失效
 - 启动时脏数据扫描：扫 3 个状态目录（不扫 deleted），按 file_state 三态更新
 - 脏数据页对 `orphan_file` 条目提供「重新入库」按钮：mover-only，`fs::rename` 到 inbox + 软删 dirty_data 行，剩下的入库由后台 scanner 接管（UI 立即返回，撞名 / rar 失败由 ConflictView / rar-error 兜底）
 - 文件名冲突检测：停在 Inbox，等用户决定跳过或比对；冲突 ReplaceB 把旧记录推到 `deleted + absent_confirmed`（不是终态，可恢复）
-- 文件回收站视图：V4.6 起只展示「待删除文件」（`status='recycle' + file_state='present'`），还原 / 永久删除；已被销毁的记录可在 Library 用 status filter（recycle / deleted）找到
-- Inbox / RecycleBin 列表封面显示开关（V4.9）：标题右侧 Image/Rows3 切换，开启时每条卡片左侧渲染 64×80 缩略图；待处理冲突只显示 A 端封面（B 没入库无封面）
+- 文件回收站视图：只展示「待删除文件」（`status='recycle' + file_state='present'`），还原 / 永久删除；已被销毁的记录可在 Library 用 status filter（recycle / deleted）找到
+- Inbox / RecycleBin 列表封面显示开关：标题右侧 Image/Rows3 切换，开启时每条卡片左侧渲染 64×80 缩略图；待处理冲突只显示 A 端封面（B 没入库无封面）
 - 本地 HTTP API 供浏览器扩展（`/api/health`、`/api/doujinshi/...`）
 - 实时更新：扫描器 emit `library-updated` 事件，前端自动刷新
 
@@ -44,7 +44,7 @@ doujinshi-records/
     doujinshi-identified/      # 识别后自动移到这里
     doujinshi-will-delete/     # 用户标记删除的文件
     doujinshi-archived/        # 归档文件
-    covers/                    # 抽取出的封面（webp，文件名 `<hash>.pwb`，V8+ 改扩展名）
+    covers/                    # 抽取出的封面（webp 字节，文件名 `<hash>.pwb`，自定义后缀防止被看图软件收编）
   src/                         # Vue 前端
   src-tauri/
     src/
@@ -100,15 +100,15 @@ pnpm tauri build
 | GET | `/api/doujinshi/search?q=<query>` | 按标题 / 社团 / 文件名搜索 |
 | GET | `/api/doujinshi/by-hash/<hash>` | 按 BLAKE3 哈希查找 |
 | GET | `/api/doujinshi/<id>` | 单条记录 |
-| POST | `/api/doujinshi/<id>/archive` | 任意 status → `archived`（V4） |
-| POST | `/api/doujinshi/<id>/restore` | 任意 status → `in_library`，含 `deleted → in_library`（V4） |
+| POST | `/api/doujinshi/<id>/archive` | 任意 status → `archived` |
+| POST | `/api/doujinshi/<id>/restore` | 任意 status → `in_library`，含 `deleted → in_library` |
 | GET | `/api/covers/<file_id>` | 封面 WebP（约 100 KB） |
 | GET | `/api/dirty` | 列出孤儿文件（脏数据扫描结果） |
 
-PowerShell 示例：
+PowerShell 示例（端口存在 `app_setting.api_port`，实际值见 Settings 页）：
 
 ```powershell
-$port = (Get-Content resources/.api-port)  # 实际端口见 Settings
+$port = 1421  # 替换为 Settings 页显示的端口
 Invoke-RestMethod "http://127.0.0.1:$port/api/health"
 Invoke-RestMethod "http://127.0.0.1:$port/api/doujinshi/search?q=sample"
 ```
@@ -120,40 +120,24 @@ Invoke-RestMethod "http://127.0.0.1:$port/api/doujinshi/search?q=sample"
 
 ## 数据模型
 
-主表 `doujinshi_file`（业务 `status` 4 值 + 文件 `file_state` 3 态 + `last_seen_path`），辅助表 `filename_alias`、`conflict`、`scan_event`、`dirty_data`。设置存在 `app_setting`。完整 schema 见 `src-tauri/src/db/migrations.rs`。
-
-## V4 迁移说明（2026-07-15，schema v8）
-
-V4 在 V7 schema 之上做 3 处增量改动（均为非破坏性升级）：
-
-1. **`doujinshi_file.file_state` 新列**（TEXT，默认 `'present'`）。`ALTER TABLE ADD COLUMN` + `pragma_table_info` 幂等检查。
-2. **`doujinshi_file.current_location` 重命名为 `status`**（SQLite 3.25+ `RENAME COLUMN`，幂等：检测列不存在则跳过）。
-3. **`doujinshi_file.current_path` 重命名为 `last_seen_path`**。
-4. **数据回填**：`status='permanently_deleted' → 'deleted'`；`has_physical_file=0 → file_state='missing'`。
-
-启动时 `db::migrations::init_schema_versioned` 会按 `schema_version` 顺序应用所有未跑的迁移，并对每个迁移做幂等检查。**已存在的数据不会被删除或重建**——V3 用户升级即用。
-
-唯一可见的行为变化：
-
-- Library 默认过滤从「active」（V4: 排除 recycle + deleted）→ 之前版本是「in_library」单值；切换过滤可见已删记录
-- 状态切换不再因源文件缺失而拒绝；可以手动把 missing 的 archived 切回 in_library
-- RecycleBin V4.6 起只展示「待删除文件」（按 `status='recycle' + file_state='present'` 过滤）；原本按 `file_state` 分 present / gone 两段，gone 段移除
-- DetailView 在文件丢失时显示 n-alert 提示
+主表 `doujinshi_file`（业务 `status` 4 值 + 文件 `file_state` 3 态 + `last_seen_path`），辅助表 `conflict`、`scan_event`、`dirty_data`。设置存在 `app_setting`。完整 schema 与版本化迁移见 `src-tauri/src/db/migrations.rs`。
 
 ## 开发注意
 
 - 监听器有 2 秒防抖窗口，新文件约 2–3 秒内出现在 Library。
 - 扫描器**只**处理 `resources/doujinshi/` 顶层的 `.zip` / `.rar`，子目录被忽略。
-- 数据库在 `<resources>/data.db`（首次运行时创建，schema 由 `init_schema_versioned` 自动迁移到 CURRENT_VERSION=8）。
+- 数据库在 `<resources>/data.db`（首次运行时创建，schema 由 `init_schema_versioned` 自动迁移到 CURRENT_VERSION=12）。
 - 启动脏数据扫描只跑 3 个状态目录（`identified / will_delete / archived`，不扫 deleted）——`dirty_scanner` 在启动时同步触发一次。
 
 ## 设计文档
 
-- **V4 spec（数据与文件解耦，当前权威）**：`docs/superpowers/specs/2026-07-15-decouple-data-and-file.md`
-- V4 实施 plan：`docs/superpowers/plans/2026-07-15-decouple-data-and-file.md`
-- **V4.5 增量 spec（脏数据页「重新入库」按钮）**：`docs/superpowers/specs/2026-07-16-dirty-reingest-button.md`
-- **V4.6 增量 spec（文件回收站只保留「待删除文件」）**：`docs/superpowers/specs/2026-07-16-v46-recycle-simplification.md`
-- **V4.7 增量 spec（设置页重设计 + 备份快照 mtime）**：`docs/superpowers/specs/2026-07-16-v47-settings-redesign.md`
-- **V4.8 增量 spec（HTTP API 测试弹窗）**：`docs/superpowers/specs/2026-07-16-v48-api-test-dialog.md`
-- **V4.9 增量 spec（Inbox / RecycleBin 列表封面显示开关）**：`docs/superpowers/specs/2026-07-16-v49-cover-toggle.md`
-- **V0.2.0 release plan**：`docs/superpowers/plans/2026-07-17-v020-release.md`
+按主题归档，不带版本号（避免被「V 编号」误导成按时间线去读旧 spec）。完整 spec 入口见 [`docs/superpowers/`](docs/superpowers/)。
+
+- 数据与文件解耦 spec（业务 status + 文件 file_state 双字段，当前权威）：`docs/superpowers/specs/2026-07-15-decouple-data-and-file.md`
+- 数据备份与还原 spec：`docs/superpowers/specs/2026-07-15-data-backup.md`
+- 脏数据页「重新入库」spec：`docs/superpowers/specs/2026-07-16-dirty-reingest-button.md`
+- 文件回收站简化 spec：`docs/superpowers/specs/2026-07-16-v46-recycle-simplification.md`
+- 设置页重设计 spec：`docs/superpowers/specs/2026-07-16-v47-settings-redesign.md`
+- HTTP API 测试弹窗 spec：`docs/superpowers/specs/2026-07-16-v48-api-test-dialog.md`
+- 列表封面开关 spec：`docs/superpowers/specs/2026-07-16-v49-cover-toggle.md`
+- 0.2.0 release plan：`docs/superpowers/plans/2026-07-17-v020-release.md`
