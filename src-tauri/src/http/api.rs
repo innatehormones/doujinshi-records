@@ -12,7 +12,7 @@ use serde_json::json;
 use std::time::SystemTime;
 
 pub async fn health() -> Json<serde_json::Value> {
-    Json(json!({ "status": "ok", "version": "0.1.0" }))
+    Json(json!({ "status": "ok", "version": "0.2.0" }))
 }
 
 #[derive(Deserialize)]
