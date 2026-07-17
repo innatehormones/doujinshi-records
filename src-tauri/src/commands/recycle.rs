@@ -94,39 +94,9 @@ pub async fn permanent_delete_inner(
     Ok(())
 }
 
-/// V4：从 recycle 取回到 in_library。
-/// 注：`commands::library::restore` 通过 state_machine 已支持任意 status→in_library
-/// 的取回，本函数保留以兼容现有 Tauri command 注册。
-#[tauri::command]
-pub async fn restore_from_recycle(state: State<'_, AppState>, id: i64) -> AppResult<()> {
-    let file = doujinshi_file::Entity::find_by_id(id)
-        .one(&state.conn)
-        .await?
-        .ok_or(AppError::NotFound)?;
-    let current = std::path::PathBuf::from(&file.last_seen_path);
-    let filename = current
-        .file_name()
-        .ok_or_else(|| AppError::Other("invalid path".into()))?
-        .to_owned();
-    let target = state.config.identified_dir().join(&filename);
-    std::fs::create_dir_all(state.config.identified_dir())?;
-    if target.exists() {
-        return Err(AppError::Other("target already exists".into()));
-    }
-    std::fs::rename(&current, &target)?;
-    let mut am: doujinshi_file::ActiveModel = file.into();
-    am.last_seen_path = Set(target.to_string_lossy().into_owned());
-    am.status = Set("in_library".into());
-    am.file_state = Set("present".into());
-    am.has_physical_file = Set(true);
-    am.marked_for_delete = Set(false);
-    am.updated_at = Set(chrono::Utc::now());
-    am.update(&state.conn).await?;
-    crate::services::identifier::record_event(&state.conn, id, "restore_from_recycle", None)
-        .await
-        .map_err(|e| AppError::Other(e.to_string()))?;
-    Ok(())
-}
+/// V4：从 recycle 取回到 in_library 由 `commands::library::restore`
+/// 通过 state_machine 统一处理（任意 status→in_library），本文件不再
+/// 单设入口。
 
 #[cfg(test)]
 mod tests {

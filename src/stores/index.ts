@@ -267,7 +267,7 @@ export const useRecycleStore = defineStore("recycle", () => {
   }
 
   async function restore(id: number) {
-    await api.restoreFromRecycle(id)
+    await api.restore(id)
     present.value = present.value.filter((f) => f.id !== id)
   }
 

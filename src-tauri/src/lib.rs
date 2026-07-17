@@ -213,7 +213,6 @@ pub async fn run(cfg: config::AppConfig, conn: DatabaseConnection) {
             commands::library::restore,
             commands::recycle::list_recycle,
             commands::recycle::permanent_delete,
-            commands::recycle::restore_from_recycle,
             commands::inbox::list_conflicts,
             commands::inbox::resolve_conflict,
             commands::dirty::list_dirty,

@@ -38,7 +38,6 @@ export const api = {
       presentOffset,
     }),
   permanentDelete: (id: number) => invoke<void>("permanent_delete", { id }),
-  restoreFromRecycle: (id: number) => invoke<void>("restore_from_recycle", { id }),
   listConflicts: (limit?: number, offset?: number) =>
     invoke<Page<ConflictItem>>("list_conflicts", { limit, offset }),
   resolveConflict: (id: number, action?: ConflictAction) =>
